@@ -3,7 +3,7 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "target": "es2023",
-    "lib": ["es2023"],
+    "lib": ["es2023", "es2024.promise"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
