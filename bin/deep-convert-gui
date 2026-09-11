@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+if [ -n "${GM2GODOT_DEEP_PYTHON:-}" ]; then
+  exec "$GM2GODOT_DEEP_PYTHON" "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/gui/deep_convert_gui.py" "$@"
+fi
+if [ -x "/Users/infi/Documents/Github/.gm2godot-campaign-venv/bin/python" ]; then
+  exec "/Users/infi/Documents/Github/.gm2godot-campaign-venv/bin/python" "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/gui/deep_convert_gui.py" "$@"
+fi
+exec python3 "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/gui/deep_convert_gui.py" "$@"
