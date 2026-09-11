@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, renameSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DeepError } from "../util/result.ts";
 import { exclusionFor } from "../indexing/exclude.ts";
@@ -17,7 +17,27 @@ export function allocateStagingDir(root: string, prefix: string): string {
   return next;
 }
 
-/** Copy a tree with the snapshot exclusion rules; the copy stays writable. */
+/** Add owner-write to every entry in a tree, preserving the other permission bits. */
+export function makeTreeWritable(root: string): void {
+  const walk = (directory: string): void => {
+    const directoryMode = statSync(directory).mode & 0o7777;
+    chmodSync(directory, directoryMode | 0o700);
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const absolute = join(directory, entry.name);
+      if (entry.isDirectory()) walk(absolute);
+      else if (entry.isFile()) chmodSync(absolute, (statSync(absolute).mode & 0o7777) | 0o600);
+    }
+  };
+  walk(root);
+}
+
+/**
+ * Copy a tree with the snapshot exclusion rules, then make the copy writable.
+ *
+ * The source of every copy here (`source/`, `baseline/`, `port/`) is frozen read-only, so a verbatim copy
+ * would inherit `0o444` files inside `0o555` directories, which breaks the staging source GM2Godot converts
+ * and the candidate workspace a patch is applied to. Unlike `thawTree`, this preserves the other mode bits.
+ */
 export function copyTree(source: string, destination: string): void {
   cpSync(source, destination, {
     recursive: true,
@@ -28,6 +48,7 @@ export function copyTree(source: string, destination: string): void {
       return !exclusionFor(relative, 0).excluded;
     },
   });
+  makeTreeWritable(destination);
 }
 
 /**

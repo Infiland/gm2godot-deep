@@ -87,6 +87,8 @@ export function hazardsFromApiUsage(
 export function hazardsFromDiagnostics(
   unitId: string,
   diagnostics: readonly ConverterDiagnosticLike[],
+  /** Digests of the unit's source files, keyed by the path the diagnostic reports. */
+  sha256ByPath: ReadonlyMap<string, string> = new Map(),
 ): readonly HazardRecord[] {
   const hazards: HazardRecord[] = [];
   const seen = new Set<string>();
@@ -103,14 +105,15 @@ export function hazardsFromDiagnostics(
       issueNumber: 0,
       unitId,
       description: `GM2Godot reported ${diagnostic.severity} ${diagnostic.code}: ${diagnostic.message}`,
-      evidence: [
-        {
-          path: diagnostic.sourcePath ?? "",
-          line: diagnostic.line ?? 1,
-          column: 1,
-          snippet: diagnostic.message,
-        },
-      ],
+      // A diagnostic that names a file with no recorded digest cannot be cited as evidence, so the
+      // location is omitted rather than attached to a path that might not exist.
+      evidence: (() => {
+        const path = diagnostic.sourcePath;
+        const sha256 = path === undefined ? undefined : sha256ByPath.get(path);
+        return path === undefined || sha256 === undefined
+          ? []
+          : [{ path, sha256, line: diagnostic.line ?? 1, column: 1, snippet: diagnostic.message }];
+      })(),
     });
   }
   return hazards.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

@@ -25,7 +25,7 @@ executed directly by Node type stripping, and `npm run build` is an alias for `n
 | Agents | `src/agents/` | `runtime.ts` (the seam), `roles.ts`, `toolSpecs.ts`, `prompts.ts`, `pi/` (real SDK adapter), `mock/` (deterministic offline runtime) |
 | Scheduling | `src/scheduling/` | `machine.ts` state machine, `leases.ts`, `budgets.ts`, `cache.ts`, `retry.ts`, `scheduler.ts`, `analysisPhase.ts`, `pipeline.ts` |
 | Integration | `src/integration/` | `allowlist.ts`, `conflicts.ts`, `integrator.ts`, `publish.ts`, `diff.ts`, `review.ts` |
-| Validation | `src/validation/` | `levels.ts` vocabulary, `coverage.ts` (A), `structural.ts` (B), `runtime.ts`/`godotRun.ts` (C), `behavioral.ts`/`trace.ts` (D), `presentation.ts` (E), `repair.ts` |
+| Validation | `src/validation/` | `levels.ts` vocabulary, `coverage.ts` (A), `structural.ts` (B), `godotRun.ts` (C), `behavioral.ts`/`trace.ts` (D), `presentation.ts` (E), `repair.ts` |
 | Evidence | `src/evidence/` | `schemas.ts` (one zod schema per artifact), `store.ts` (atomic writes, reads, staleness validation), `ids.ts` (path encoding) |
 | Sandbox | `src/sandbox/` | `backend.ts` (the seam), `select.ts` (fail-closed selection), `sandboxExec.ts`, `docker.ts`, `unsafeLocal.ts`, `env.ts` |
 | Storage | `src/storage/` | `db.ts` (`node:sqlite` + pragmas + transactions), `migrations.ts` (ordered schema), `repo.ts` (typed accessors), `types.ts` |
@@ -235,7 +235,7 @@ version, so an in-process check can never claim an engine ran it. `skippedResult
 |---|---|---|
 | A | `src/validation/coverage.ts` | Every inventory file and unit carries exactly one disposition (`analyzed, retained, repaired, replaced, blocked, deterministic_only`, or `excluded(<reason>)`). Reported as a coverage percentage of files accounted for. |
 | B | `src/validation/structural.ts` | `structural-static` parses `project.godot`, `.tscn`/`.tres` references and `preload`/`load` literals without an engine; `structural-gm2godot` runs the pinned converter's `validate` and inherits its verdict (a skipped report stays skipped). |
-| C | `src/validation/runtime.ts`, `godotRun.ts` | Headless Godot run with captured, ANSI-stripped output; any line matching `^(ERROR\|SCRIPT ERROR\|SHADER ERROR)` fails the check even on exit 0. |
+| C | `src/validation/godotRun.ts` | Headless Godot run with captured, ANSI-stripped output; any line matching `^(ERROR\|SCRIPT ERROR\|SHADER ERROR)` fails the check even on exit 0 (`runGodotHeadless`, `firstEngineErrorLine`). |
 | D | `src/validation/behavioral.ts`, `trace.ts` | Steps the candidate under a scenario harness and compares the single `DEEP_TRACE <json>` line positionally against a recorded expectation. |
 | E | `src/validation/presentation.ts` | Visual, audio, control and export checks; on a headless host they are `skipped` with reasons and are never derived from a successful headless boot. |
 

@@ -21,6 +21,8 @@ export type EdgeConfidence = (typeof CONFIDENCES)[number];
 
 export interface EvidenceLocation {
   readonly path: string;
+  /** Digest of the file the location points at, so a record can be checked for staleness. */
+  readonly sha256: string;
   readonly line: number;
   readonly column: number;
   readonly snippet: string;

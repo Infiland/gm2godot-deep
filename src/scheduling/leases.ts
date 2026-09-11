@@ -63,8 +63,10 @@ export interface ReclaimOutcome {
 }
 
 /**
- * Return tasks whose lease expired while RUNNING to READY with `attempt + 1`, recording a `lease_expired`
- * event. This is the crash-recovery path; `resume` is the only thing that calls it.
+ * Return tasks whose lease expired while RUNNING to READY with `attempt + 1`. The transition table has no
+ * direct `RUNNING → READY` edge (a worker that died mid-task is a failure, not a no-op), so the reclaim goes
+ * `RUNNING → FAILED` carrying the `lease_expired` evidence and then `FAILED → READY` as an explicit resume.
+ * This is the crash-recovery path; `resume` is the only thing that calls it.
  */
 export function reclaimExpired(repo: Repo, now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z")): ReclaimOutcome {
   const machine = new TaskMachine(repo);
@@ -77,10 +79,14 @@ export function reclaimExpired(repo: Repo, now = new Date().toISOString().replac
       continue;
     }
     repo.releaseLease(lease.taskId, lease.owner ?? "");
-    machine.transition(lease.taskId, "READY", {
-      reason: "resume",
+    machine.transition(lease.taskId, "FAILED", {
       eventKind: "lease_expired",
       detail: { previousOwner: lease.owner, expiresAt: lease.expiresAt },
+    });
+    machine.transition(lease.taskId, "READY", {
+      reason: "resume",
+      incrementAttempt: true,
+      detail: { previousOwner: lease.owner, expiresAt: lease.expiresAt, reclaimedFrom: "RUNNING" },
     });
     reclaimed.push({ taskId: lease.taskId, previousOwner: lease.owner });
   }

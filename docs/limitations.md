@@ -106,3 +106,39 @@ to 2 and `project.godot` receives no GameMaker-derived settings. `generateBaseli
 Related upstream behaviour, also recorded there: GM2Godot refuses a redirected report-directory root,
 so on macOS `/tmp/...` fails while the unredirected `/private/tmp/...` succeeds. GM2Godot is not
 patched for either behaviour.
+
+## 10. `baselineId` is not reproducible across two workspaces
+
+`baselineId` is defined as `sha256` of the bytes of `gm2godot/conversion_manifest.json`
+(`src/adapters/gm2godot/manifest.ts`), which is the identity a patch and an analysis record are bound to.
+
+Two conversions **from the same source path** are byte-identical — verified on the pinned converter:
+`conversion_manifest.json`, `conversion_attempt.json` and every `.gmlmap.json` produce empty `diff`, and
+the manifest contains no absolute paths of its own (`grep -c '/private/tmp' <manifest>` → `0`).
+
+The manifest is nevertheless not reproducible across two *workspaces*, because each workspace converts from
+its own staging copy (`<workspace>/.staging/baseline-<n>/source`) and the converter's per-file source maps
+embed the absolute path of the project it was pointed at:
+
+```
+objects/obj_counter/obj_counter.gd.gmlmap.json
+  "source_path": null                                  <- top level is null for object scripts
+  entries[0].source_path:
+  "/Users/infi/Documents/Github/gm2godot-deep/fixtures/gm-projects/counter/objects/obj_counter/Create_0.gml"
+```
+
+`conversion_manifest.json` digests every generated file, `.gmlmap.json` included. A different staging path
+therefore changes those digests, which changes the manifest bytes, which changes `baselineId`. This is not
+fixable from this repository without rewriting upstream output, and it is not a defect: `baselineId` names
+one specific generation, and patches are deliberately rejected when the generation they were written
+against has changed (`GM2DEEP-PATCH-STALE-INPUT`).
+
+Consequence for the determinism check: `tests/e2e/offline-workflow.test.ts` compares every artifact across
+two runs with exactly two run-specific fields normalised — `baselineId` (and the same field inside each
+analysis record) and timestamps. Everything else, including the inventory, the unit set, the confirmed and
+inferred dependency edges, the contracts, the plan, the task rows, the patches and the check results, is
+compared byte-for-byte.
+
+`src/indexing/inventory.ts` copes with the null/absolute `source_path` by normalising both the top-level
+value and every `entries[].source_path` against the project's real source files (longest suffix match wins),
+which is the only form that survives conversion from a staging copy.

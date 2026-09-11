@@ -111,6 +111,12 @@ export interface InheritanceCall {
   readonly location: SourceLocation;
 }
 
+/** A function declared in a file. GameMaker 2.3+ puts functions inside script resources. */
+export interface FunctionDefinition {
+  readonly name: string;
+  readonly location: SourceLocation;
+}
+
 /** A reference the scanner refuses to resolve, with the reason it refused. */
 export interface UnresolvedReference {
   readonly symbol: string;
@@ -130,6 +136,8 @@ export interface ScanResult {
   readonly roomRefs: readonly RoomReference[];
   readonly resourceRefs: readonly ResourceReference[];
   readonly inheritanceCalls: readonly InheritanceCall[];
+  /** Functions declared in this file, so a call to a function can resolve to its owning script. */
+  readonly functionDefinitions: readonly FunctionDefinition[];
   readonly unresolved: readonly UnresolvedReference[];
 }
 
@@ -145,6 +153,7 @@ export const EMPTY_SCAN_RESULT = (path: string): ScanResult => ({
   roomRefs: [],
   resourceRefs: [],
   inheritanceCalls: [],
+  functionDefinitions: [],
   unresolved: [],
 });
 

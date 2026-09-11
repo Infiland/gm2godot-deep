@@ -1,5 +1,32 @@
 /** Human-readable rendering helpers for `status`, `report` and `doctor`. */
 
+import type { ParsedArgs } from "./args.ts";
+
+/**
+ * Typed accessors over `CommandContext["flags"]`. `parseArgs` already validated every flag name and
+ * kind (a typo is rejected, never ignored), so these narrow the union once per read instead of at
+ * every use site.
+ */
+export function flagString(flags: ParsedArgs["flags"], name: string): string | null {
+  const value = flags[name];
+  return typeof value === "string" ? value : null;
+}
+
+export function flagNumber(flags: ParsedArgs["flags"], name: string): number | null {
+  const value = flags[name];
+  return typeof value === "number" ? value : null;
+}
+
+export function flagBoolean(flags: ParsedArgs["flags"], name: string): boolean {
+  const value = flags[name];
+  return value === true;
+}
+
+export function flagList(flags: ParsedArgs["flags"], name: string): readonly string[] {
+  const value = flags[name];
+  return Array.isArray(value) ? value : [];
+}
+
 export function renderKeyValues(pairs: readonly (readonly [string, string])[]): string {
   const width = pairs.reduce((max, [key]) => Math.max(max, key.length), 0);
   return pairs.map(([key, value]) => `${key.padEnd(width)}  ${value}`).join("\n");

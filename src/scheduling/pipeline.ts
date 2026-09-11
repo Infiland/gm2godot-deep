@@ -1,15 +1,13 @@
-import { existsSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { DeepError } from "../util/result.ts";
-import { createLogger, type Logger } from "../util/log.ts";
-import { readJsonFile, writeJsonAtomic, writeTextAtomic } from "../util/json.ts";
-import { sha256Bytes, sha256Text } from "../util/sha256.ts";
-import { newId, nowIso } from "../util/ids.ts";
+import type { Logger } from "../util/log.ts";
+import { newId } from "../util/ids.ts";
 import { openDatabase, type Database } from "../storage/db.ts";
 import { Repo } from "../storage/repo.ts";
-import { openWorkspace, type Workspace } from "../workspaces/workspace.ts";
-import { verifySnapshot } from "../workspaces/snapshot.ts";
-import { promoteDirectory } from "../workspaces/staging.ts";
+import { openWorkspace, removeTree, type Workspace } from "../workspaces/workspace.ts";
+import { copyTree } from "../workspaces/staging.ts";
+import { thawTree, verifySnapshot } from "../workspaces/snapshot.ts";
 import type { ConfigOverrides } from "../config/load.ts";
 import { resolveGodotBinary, resolvePython } from "../config/resolve.ts";
 import {
@@ -20,62 +18,37 @@ import {
   type GmlApiEntry,
   type Gm2GodotProbe,
 } from "../adapters/gm2godot/bridge.ts";
-import { generateBaseline, readBaselineEvidence, type BaselineEvidence } from "../adapters/gm2godot/adapter.ts";
-import { diagnosticsForUnit, readConversionDiagnostics } from "../adapters/gm2godot/diagnostics.ts";
-import { MANIFEST_RELATIVE_PATH } from "../adapters/gm2godot/manifest.ts";
-import { SUPPORTED_GM2GODOT_VERSIONS } from "../adapters/gm2godot/versions.ts";
+import {
+  generateBaseline,
+  readBaselineEvidence,
+  type BaselineEvidence,
+} from "../adapters/gm2godot/adapter.ts";
+import { MANIFEST_RELATIVE_PATH, readBaselineProvenance } from "../adapters/gm2godot/manifest.ts";
 import { probeGodot } from "../adapters/godot/adapter.ts";
 import { selectSandboxBackend } from "../sandbox/select.ts";
 import {
   buildInventory,
-  readBridgeInventory,
-  readGmlApiEntries,
-  readInventory,
   readSnapshotRecord,
   type InventoryRecord,
 } from "../indexing/inventory.ts";
-import { buildDependencies } from "../analysis/dependencies.ts";
-import { buildGraph } from "../analysis/graph.ts";
-import { applyGroups, findGroups } from "../analysis/cycles.ts";
-import { hazardsFromApiUsage, type HazardRecord } from "../analysis/hazards.ts";
-import type { DependencyReport } from "../analysis/edges.ts";
-import { riskScore, reviewRequired } from "../planning/risk.ts";
-import { seedContracts } from "../planning/contracts.ts";
-import { reconcile } from "../planning/reconciler.ts";
-import { planTasks, taskIdFor } from "../planning/tasks.ts";
-import { AnalysisCache, analysisCacheKey } from "./cache.ts";
+import type { AnalysisUnit } from "../indexing/units.ts";
+import type { AnalysisRecord, ContractRecord, PatchRecordPayload, PlanRecord, ProducedBy, ReviewRecord } from "../evidence/schemas.ts";
+import { AnalysisCache } from "./cache.ts";
 import { BudgetLedger, ceilingsFrom } from "./budgets.ts";
-import { LeaseManager, reclaimExpired, retryStuckTasks } from "./leases.ts";
+import { LeaseManager } from "./leases.ts";
 import { TaskMachine } from "./machine.ts";
-import { dispatchAll, type DispatchItem } from "./scheduler.ts";
-import { decideRepair } from "./retry.ts";
 import { PROMPT_VERSION } from "../agents/prompts.ts";
-import { ROLE_CONFIGS } from "../agents/roles.ts";
-import { buildToolSpecs, type ToolBuildDeps } from "../agents/toolSpecs.ts";
 import { createMockRuntime } from "../agents/mock/mockRuntime.ts";
-import type { MockFacts } from "../agents/mock/script.ts";
+import type { MockFacts, MockPlanInput } from "../agents/mock/script.ts";
 import { createPiRuntime } from "../agents/pi/piRuntime.ts";
 import type { AgentRuntime, ToolContext, Usage } from "../agents/runtime.ts";
-import {
-  listAnalyses,
-  recordValidation,
-  validateAnalysisEvidence,
-  writeAnalysis,
-  writeReview,
-  writeValidation,
-} from "../evidence/store.ts";
-import type { AnalysisRecord, ConverterDiagnostic, ProducedBy, ReviewRecord } from "../evidence/schemas.ts";
-import { patchDiffPath, patchJsonPath, renderUnifiedDiff } from "../integration/diff.ts";
-import { integrateTask } from "../integration/integrator.ts";
-import { checkBehavioral } from "../validation/behavioral.ts";
-import { checkCoverage } from "../validation/coverage.ts";
-import { runGodotHeadless } from "../validation/godotRun.ts";
-import { checkPresentation } from "../validation/presentation.ts";
-import { checkStructural } from "../validation/structural.ts";
-import type { ValidationResult } from "../validation/levels.ts";
-import { repoRoot } from "../util/package.ts";
-import type { TaskRecord, UnitStrategy } from "../storage/types.ts";
-import type { AnalysisUnit } from "../indexing/units.ts";
+import type { ToolBuildDeps } from "../agents/toolSpecs.ts";
+import type { RiskAssessment, TaskRecord, UnitStrategy } from "../storage/types.ts";
+import type { DependencyReport } from "../analysis/edges.ts";
+import type { HazardRecord } from "../analysis/hazards.ts";
+import type { UnitGroup } from "../analysis/cycles.ts";
+import type { ImplementationTaskDraft } from "../planning/tasks.ts";
+import { phaseAnalyze, phaseImplement, phasePlan, phaseReport, phaseValidate } from "./phases.ts";
 
 export type Phase = "inventory" | "baseline" | "analyze" | "plan" | "implement" | "validate" | "report";
 
@@ -125,13 +98,6 @@ export function openWorkspaceRepo(root: string, overrides: ConfigOverrides = {})
   const workspace = openWorkspace(root, overrides);
   const db = openDatabase(workspace.paths.database);
   return { workspace, repo: new Repo(db), db };
-}
-
-function resolveToolchain(workspace: Workspace): { python: string; godotBinary: string | null } {
-  return {
-    python: resolvePython(workspace.config).path,
-    godotBinary: resolveGodotBinary(workspace.config)?.path ?? null,
-  };
 }
 
 /** Probe every external tool the pipeline depends on. A missing tool is reported, never assumed present. */
@@ -194,7 +160,8 @@ export async function runDoctor(input: { workspace: Workspace; logger: Logger })
 
 // ------------------------------------------------------------------ runtime
 
-interface UnitRuntimeContext {
+/** Everything the deterministic runtime needs to answer one request, keyed by the request's task id. */
+export interface UnitRuntimeContext {
   readonly toolDeps: ToolBuildDeps;
   readonly facts: MockFacts;
 }
@@ -204,38 +171,53 @@ interface RuntimeBundle {
   readonly credentials: Readonly<Record<string, string>>;
 }
 
-function producedByFor(options: PipelineOptions, usage: Usage): ProducedBy {
+export function producedByFor(options: PipelineOptions, usage: Usage): ProducedBy {
+  const config = options.workspace.config;
   return {
-    runtime: options.workspace.config.agent.runtime,
-    simulated: options.workspace.config.agent.runtime === "mock",
-    ...(options.workspace.config.agent.provider === null ? {} : { provider: options.workspace.config.agent.provider }),
-    ...(options.workspace.config.agent.model === null ? {} : { model: options.workspace.config.agent.model }),
+    runtime: config.agent.runtime,
+    simulated: config.agent.runtime === "mock",
+    ...(config.agent.provider === null ? {} : { provider: config.agent.provider }),
+    ...(config.agent.model === null ? {} : { model: config.agent.model }),
     promptVersion: PROMPT_VERSION,
     schemaVersion: 1,
     usage,
   };
 }
 
-const MOCK_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0, reported: false };
+export const MOCK_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0, reported: false };
 
-function runtimeFor(
-  options: PipelineOptions,
-  contexts: Map<string, UnitRuntimeContext>,
-): RuntimeBundle {
-  const config = options.workspace.config;
-  const resolveContext = (request: { taskId: string }): UnitRuntimeContext => {
-    const context = contexts.get(request.taskId);
-    if (context === undefined) {
-      throw new DeepError("GM2DEEP-RUNTIME-CONTEXT-MISSING", `no unit context registered for ${request.taskId}`);
-    }
-    return context;
+/** The mock reconciler is told which strategies to record from the analysed state, not from a model. */
+function mockPlanInputFor(run: PipelineRun): MockPlanInput {
+  const strategies: Record<string, UnitStrategy> = {};
+  for (const unit of run.state.units) {
+    if (!unit.analysisRequired) continue;
+    strategies[unit.id] = run.state.analyses.get(unit.id)?.strategy ?? "retain_generated";
+  }
+  return {
+    unitIds: Object.keys(strategies).sort(),
+    strategies,
+    contracts: run.state.seeds.map((seed) => ({ concern: seed.concern, version: seed.version, rules: seed.rules })),
   };
+}
+
+function resolveContext(run: PipelineRun, taskId: string): UnitRuntimeContext {
+  const exact = run.contexts.get(taskId);
+  if (exact !== undefined) return exact;
+  const hash = taskId.indexOf("#");
+  const base = hash === -1 ? null : run.contexts.get(taskId.slice(0, hash));
+  if (base !== null && base !== undefined) return base;
+  throw new DeepError("GM2DEEP-RUNTIME-CONTEXT-MISSING", `no unit context registered for ${taskId}`);
+}
+
+export function runtimeFor(run: PipelineRun): RuntimeBundle {
+  const config = run.options.workspace.config;
   if (config.agent.runtime === "mock") {
     return {
       runtime: createMockRuntime({
-        transcriptsDir: options.workspace.paths.transcripts,
-        factsFor: (request) => resolveContext(request),
-        logger: options.logger,
+        transcriptsDir: run.options.workspace.paths.transcripts,
+        factsFor: (request) => resolveContext(run, request.taskId),
+        planInputFor: () => mockPlanInputFor(run),
+        logger: run.options.logger,
       }),
       credentials: {},
     };
@@ -244,68 +226,152 @@ function runtimeFor(
     runtime: createPiRuntime({
       config,
       credentials: {},
-      transcriptsDir: options.workspace.paths.transcripts,
-      logger: options.logger,
+      transcriptsDir: run.options.workspace.paths.transcripts,
+      logger: run.options.logger,
     }),
     credentials: {},
   };
 }
 
-// ---------------------------------------------------------------- pipeline
+// ---------------------------------------------------------------- pipeline run
+
+/** The mutable state every phase reads and refines. One object, threaded through every phase. */
+export interface PipelineState {
+  inventory: InventoryRecord | null;
+  bridge: BridgeInventory | null;
+  gmlApi: GmlApiEntry[];
+  probe: Gm2GodotProbe | null;
+  dependencies: DependencyReport | null;
+  units: AnalysisUnit[];
+  groups: readonly UnitGroup[];
+  hazards: readonly HazardRecord[];
+  analyses: Map<string, AnalysisRecord>;
+  reviews: Map<string, ReviewRecord>;
+  risks: Map<string, RiskAssessment>;
+  seeds: readonly ContractRecord[];
+  contracts: readonly ContractRecord[];
+  plan: PlanRecord | null;
+  drafts: Map<string, ImplementationTaskDraft>;
+  baselineId: string | null;
+  python: string;
+  godotBinary: string | null;
+  godotVersion: string | null;
+}
+
+/** One run: the fixed options plus every mutable collaborator the phases share. */
+export interface PipelineRun {
+  readonly options: PipelineOptions;
+  readonly repo: Repo;
+  readonly machine: TaskMachine;
+  readonly leases: LeaseManager;
+  readonly budget: BudgetLedger;
+  readonly cache: AnalysisCache;
+  readonly contexts: Map<string, UnitRuntimeContext>;
+  readonly state: PipelineState;
+  readonly blocked: string[];
+  readonly failed: string[];
+  readonly skipped: string[];
+  readonly portMutex: <T>(body: () => Promise<T> | T) => Promise<T>;
+  readonly planVersion: number;
+  runtime: AgentRuntime;
+  credentials: Readonly<Record<string, string>>;
+}
+
+function createMutex(): <T>(body: () => Promise<T> | T) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(body: () => Promise<T> | T): Promise<T> => {
+    const result = tail.then(() => body());
+    tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+}
+
+function readBaselineId(workspace: Workspace): string | null {
+  try {
+    return readBaselineEvidence(workspace.paths.evidenceInventory).baselineId;
+  } catch {
+    return null;
+  }
+}
 
 export async function runPipeline(options: PipelineOptions): Promise<PipelineOutcome> {
   const blocked: string[] = [];
   const failed: string[] = [];
   const skipped: string[] = [];
   const run = options.repo.createRun(newId("run"), options.through, options.execute, { cwd: process.cwd() });
-  const machine = new TaskMachine(options.repo);
-  const leases = new LeaseManager(options.repo, `${process.pid}-${run.id}`);
-  const budget = new BudgetLedger(options.repo, run.id, ceilingsFrom(options.workspace.config));
-  const contexts = new Map<string, UnitRuntimeContext>();
-
-  const state = {
-    inventory: null as InventoryRecord | null,
-    bridge: null as BridgeInventory | null,
-    gmlApi: [] as GmlApiEntry[],
-    probe: null as Gm2GodotProbe | null,
-    dependencies: null as DependencyReport | null,
-    units: [] as AnalysisUnit[],
-    hazards: [] as HazardRecord[],
-    python: "",
-    godotBinary: null as string | null,
+  const state: PipelineState = {
+    inventory: null,
+    bridge: null,
+    gmlApi: [],
+    probe: null,
+    dependencies: null,
+    units: [],
+    groups: [],
+    hazards: [],
+    analyses: new Map(),
+    reviews: new Map(),
+    risks: new Map(),
+    seeds: [],
+    contracts: [],
+    plan: null,
+    drafts: new Map(),
+    baselineId: readBaselineId(options.workspace),
+    python: resolvePython(options.workspace.config).path,
+    godotBinary: resolveGodotBinary(options.workspace.config)?.path ?? null,
+    godotVersion: null,
   };
-  state.python = resolvePython(options.workspace.config).path;
-  state.godotBinary = resolveGodotBinary(options.workspace.config)?.path ?? null;
+  const pipeline: PipelineRun = {
+    options,
+    repo: options.repo,
+    machine: new TaskMachine(options.repo),
+    leases: new LeaseManager(options.repo, `${String(process.pid)}-${run.id}`),
+    budget: new BudgetLedger(options.repo, run.id, ceilingsFrom(options.workspace.config)),
+    cache: new AnalysisCache(options.repo),
+    contexts: new Map(),
+    state,
+    blocked,
+    failed,
+    skipped,
+    portMutex: createMutex(),
+    planVersion: 1,
+    runtime: null as unknown as AgentRuntime,
+    credentials: {},
+  };
+  const bundle = runtimeFor(pipeline);
+  pipeline.runtime = bundle.runtime;
+  pipeline.credentials = bundle.credentials;
 
   try {
     if (phaseRank(options.through) >= phaseRank("inventory")) {
       options.repo.updateRunPhase(run.id, "inventory");
-      await phaseInventory(options, state);
+      await phaseInventory(pipeline);
     }
     if (phaseRank(options.through) >= phaseRank("baseline")) {
       options.repo.updateRunPhase(run.id, "baseline");
-      await phaseBaseline(options, state);
+      await phaseBaseline(pipeline);
     }
     if (phaseRank(options.through) >= phaseRank("analyze")) {
       options.repo.updateRunPhase(run.id, "analyze");
-      await phaseAnalyze(options, state, contexts, blocked, failed, skipped);
+      await phaseAnalyze(pipeline);
     }
     if (phaseRank(options.through) >= phaseRank("plan")) {
       options.repo.updateRunPhase(run.id, "plan");
-      await phasePlan(options, state, contexts, blocked);
+      await phasePlan(pipeline);
     }
     if (options.execute && phaseRank(options.through) >= phaseRank("implement")) {
       options.repo.updateRunPhase(run.id, "implement");
-      await phaseImplement(options, state, contexts, machine, leases, budget, blocked, failed, skipped);
+      await phaseImplement(pipeline);
     }
     if (options.execute && phaseRank(options.through) >= phaseRank("validate")) {
       options.repo.updateRunPhase(run.id, "validate");
-      await phaseValidate(options, state, blocked, failed, skipped);
+      await phaseValidate(pipeline);
     }
     if (phaseRank(options.through) >= phaseRank("report")) {
       options.repo.updateRunPhase(run.id, "report");
-      const { writeReport } = await import("../evidence/report.ts");
-      await writeReport({ workspace: options.workspace, repo: options.repo, logger: options.logger });
+      await phaseReport(pipeline);
     }
     options.repo.finishRun(run.id, blocked.length > 0 || failed.length > 0 ? "incomplete" : "completed", {
       blocked,
@@ -314,24 +380,13 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineOut
     });
     return { reached: options.through, blocked, failed, skipped };
   } finally {
-    leases.releaseAll();
+    pipeline.leases.releaseAll();
   }
 }
 
-interface PipelineState {
-  inventory: InventoryRecord | null;
-  bridge: BridgeInventory | null;
-  gmlApi: GmlApiEntry[];
-  probe: Gm2GodotProbe | null;
-  dependencies: DependencyReport | null;
-  units: AnalysisUnit[];
-  hazards: HazardRecord[];
-  python: string;
-  godotBinary: string | null;
-}
-
-async function phaseInventory(options: PipelineOptions, state: PipelineState): Promise<void> {
-  const { workspace } = options;
+async function phaseInventory(run: PipelineRun): Promise<void> {
+  const { workspace } = run.options;
+  const state = run.state;
   const snapshot = readSnapshotRecord(workspace.paths.evidenceInventory);
   await verifySnapshot(workspace.paths.source, snapshot);
   const bridgeOptions = { checkout: workspace.config.gm2godot.checkout, python: state.python };
@@ -348,23 +403,24 @@ async function phaseInventory(options: PipelineOptions, state: PipelineState): P
     gmlApiEntries: state.gmlApi,
     evidenceInventoryDir: workspace.paths.evidenceInventory,
   });
-  options.logger.info(
-    `inventory: ${state.inventory.counts.total} file(s), ${state.inventory.counts.unitsTotal} unit(s), ${state.inventory.counts.unitsRequiringAnalysis} requiring analysis`,
+  run.options.logger.info(
+    `inventory: ${String(state.inventory.counts.total)} file(s), ${String(state.inventory.counts.unitsTotal)} unit(s), ${String(state.inventory.counts.unitsRequiringAnalysis)} requiring analysis`,
   );
 }
 
-async function phaseBaseline(options: PipelineOptions, state: PipelineState): Promise<void> {
-  const { workspace } = options;
+async function phaseBaseline(run: PipelineRun): Promise<void> {
+  const { workspace } = run.options;
+  const state = run.state;
   const existingManifest = join(workspace.paths.baseline, MANIFEST_RELATIVE_PATH);
   if (existsSync(existingManifest)) {
     const provenance = readBaselineProvenance(workspace.paths.baseline);
-    const evidence = readBaselineEvidence(workspace.paths.evidenceInventory);
+    const evidence: BaselineEvidence = readBaselineEvidence(workspace.paths.evidenceInventory);
     if (provenance.fresh && evidence.baselineId === provenance.baselineId) {
-      options.logger.info(`baseline: reusing recorded generation ${provenance.baselineId}`);
-      await refreshInventoryWithBaseline(options, state, workspace.paths.baseline);
+      run.options.logger.info(`baseline: reusing recorded generation ${provenance.baselineId}`);
+      await refreshInventoryWithBaseline(run, workspace.paths.baseline);
       return;
     }
-    options.logger.warn(`baseline: existing generation is not fresh (${provenance.reasons.join("; ")}); regenerating`);
+    run.options.logger.warn(`baseline: existing generation is not fresh (${provenance.reasons.join("; ")}); regenerating`);
   }
 
   const result = await generateBaseline({
@@ -379,9 +435,9 @@ async function phaseBaseline(options: PipelineOptions, state: PipelineState): Pr
       gm2godotCommit: state.probe?.commit ?? null,
       pythonVersion: state.probe?.pythonVersion ?? null,
     },
-    allowStaleBaseline: options.allowStaleBaseline,
+    allowStaleBaseline: run.options.allowStaleBaseline,
     onAttempt: (evidence) =>
-      options.repo.recordBaselineAttempt({
+      run.options.repo.recordBaselineAttempt({
         id: newId("attempt"),
         exitCode: evidence.exitCode ?? -1,
         state: evidence.state,
@@ -389,12 +445,16 @@ async function phaseBaseline(options: PipelineOptions, state: PipelineState): Pr
         detail: evidence,
       }),
   });
-  options.logger.info(`baseline: ${result.interpretation.outcome} (exit ${String(result.exitCode)}) -> ${result.godotProjectDir}`);
-  await refreshInventoryWithBaseline(options, state, workspace.paths.baseline);
+  state.baselineId = result.provenance?.baselineId ?? result.evidence.baselineId;
+  run.options.logger.info(
+    `baseline: ${result.interpretation.outcome} (exit ${String(result.exitCode)}) -> ${result.godotProjectDir}`,
+  );
+  await refreshInventoryWithBaseline(run, workspace.paths.baseline);
 }
 
-async function refreshInventoryWithBaseline(options: PipelineOptions, state: PipelineState, baselineDir: string): Promise<void> {
-  const { workspace } = options;
+async function refreshInventoryWithBaseline(run: PipelineRun, baselineDir: string): Promise<void> {
+  const { workspace } = run.options;
+  const state = run.state;
   if (state.bridge === null || state.probe === null) return;
   const snapshot = readSnapshotRecord(workspace.paths.evidenceInventory);
   state.inventory = await buildInventory({
@@ -408,7 +468,31 @@ async function refreshInventoryWithBaseline(options: PipelineOptions, state: Pip
   });
 }
 
-function toolContextFor(
+/**
+ * `port/` starts as a writable copy of the frozen baseline. The baseline itself is never modified: every
+ * agent edit lands in `port/` through publication, and the converter's own evidence stays under
+ * `baseline/gm2godot/`.
+ */
+export function ensurePort(run: PipelineRun): string {
+  const { workspace } = run.options;
+  const port = workspace.paths.port;
+  if (existsSync(join(port, "project.godot"))) return port;
+  if (!existsSync(join(workspace.paths.baseline, "project.godot"))) {
+    throw new DeepError(
+      "GM2DEEP-PORT-UNSEEDED",
+      "the port has no project.godot and the baseline holds no Godot project to seed it from",
+      { port, baseline: workspace.paths.baseline },
+    );
+  }
+  removeTree(port);
+  mkdirSync(port, { recursive: true });
+  copyTree(workspace.paths.baseline, port);
+  thawTree(port);
+  run.options.logger.info(`port: seeded from the frozen baseline at ${workspace.paths.baseline}`);
+  return port;
+}
+
+export function toolContextFor(
   options: PipelineOptions,
   task: TaskRecord,
   signal: AbortSignal,
@@ -433,4 +517,7 @@ function toolContextFor(
   };
 }
 
-export { phaseAnalyze, phasePlan, phaseImplement, phaseValidate, runtimeFor, toolContextFor, producedByFor, MOCK_USAGE };
+export { phaseAnalyze, phaseImplement, phasePlan, phaseReport, phaseValidate };
+
+/** Re-exported so a caller holding only `pipeline.ts` can type a patch payload built elsewhere. */
+export type { PatchRecordPayload };

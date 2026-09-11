@@ -13,6 +13,9 @@ import type { CheckLevel, ValidationResult } from "./levels.ts";
  * from the exit status **and** the parsed output. An engine error line fails the check even when the
  * process exits 0, and a check can only be `passed` with a real command, a probed engine build string
  * and a numeric exit status.
+ *
+ * Every run is preceded by one idempotent `--import` pass (see {@link importGodotProject}) so a cold
+ * project's missing import cache cannot masquerade as a runtime failure.
  */
 
 /** Godot prints these at the start of a line; a warning is not a failure, an error is. */
@@ -69,8 +72,85 @@ export function firstEngineErrorLine(text: string): string | null {
   return null;
 }
 
+export interface GodotImportDeps {
+  readonly binary: string;
+  readonly projectPath: string;
+  readonly timeoutSeconds: number;
+  readonly logsDir: string;
+  /** The log is written as `<logsDir>/<checkId>.log`, so the caller can keep it distinct. */
+  readonly checkId: string;
+}
+
+/** Result of the preparatory `--import` pass. A non-zero exit or error line is recorded, not hidden. */
+export interface GodotImportOutcome {
+  readonly argv: readonly string[];
+  readonly exitCode: number | null;
+  readonly durationMs: number;
+  readonly timedOut: boolean;
+  readonly errorLine: string | null;
+  readonly logPath: string;
+  /** Non-null when the engine could not be spawned at all; `exitCode` is then `null`. */
+  readonly spawnError: string | null;
+}
+
+/**
+ * Run one `--import` pass so the project has Godot's own `.godot/` cache and `.import` files.
+ *
+ * A cold GM2Godot generation has no import cache, and a first run then reports
+ * `No loader found for resource: res://…png` plus a `.tscn` parse error even though the script runs
+ * and exits 0. Those lines are an artefact of the cache, not of the port's behaviour, so they are
+ * cleared by an explicit import pass before any check judges the run's output. The cache only ever
+ * lands inside the caller's project copy.
+ */
+export async function importGodotProject(deps: GodotImportDeps): Promise<GodotImportOutcome> {
+  const argv = [deps.binary, "--headless", "--path", deps.projectPath, "--import"];
+  let captured;
+  try {
+    captured = await spawnCapture({
+      argv,
+      cwd: process.cwd(),
+      env: buildSubprocessEnv({}),
+      timeoutSeconds: deps.timeoutSeconds,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const logPath = writeRunLog(deps, {
+      argv,
+      exitCode: null,
+      signal: null,
+      stdout: "",
+      stderr: `could not run the import pass: ${message}`,
+      durationMs: 0,
+      timedOut: false,
+      truncated: false,
+    });
+    return { argv, exitCode: null, durationMs: 0, timedOut: false, errorLine: null, logPath, spawnError: message };
+  }
+  const stdout = stripAnsi(captured.stdout);
+  const stderr = stripAnsi(captured.stderr);
+  const logPath = writeRunLog(deps, {
+    argv,
+    exitCode: captured.exitCode,
+    signal: captured.signal,
+    stdout,
+    stderr,
+    durationMs: captured.durationMs,
+    timedOut: captured.timedOut,
+    truncated: captured.truncated,
+  });
+  return {
+    argv,
+    exitCode: captured.exitCode,
+    durationMs: captured.durationMs,
+    timedOut: captured.timedOut,
+    errorLine: firstEngineErrorLine(stdout) ?? firstEngineErrorLine(stderr),
+    logPath,
+    spawnError: null,
+  };
+}
+
 function writeRunLog(
-  deps: GodotHeadlessRunDeps,
+  deps: { readonly logsDir: string; readonly checkId: string },
   observed: {
     argv: readonly string[];
     exitCode: number | null;
@@ -109,14 +189,47 @@ function withObservations(result: ValidationResult, observations: RunObservation
 }
 
 /**
- * Run `godot --headless --path <projectPath> --script res://<scriptPath>`, capture bounded output,
- * persist the raw log and return a runtime check. The caller owns copying the project; this function
- * writes only the log file.
+ * Import the project once, then run `godot --headless --path <projectPath> --script res://<scriptPath>`,
+ * capture bounded output, persist the raw logs and return a runtime check. The caller owns copying the
+ * project; this function writes only the logs and Godot's own `.godot/` cache inside `projectPath`.
  */
 export async function runGodotHeadless(deps: GodotHeadlessRunDeps): Promise<GodotRunCheck> {
   const level = deps.level ?? "C";
   const name = deps.name ?? `godot headless run (${deps.checkId})`;
   const argv = [deps.binary, "--headless", "--path", deps.projectPath, "--script", `res://${deps.scriptPath}`];
+
+  // A cold GM2Godot generation has no `.godot/` import cache, and the first script run then reports
+  // `No loader found for resource: res://…png` plus a `.tscn` parse error while behaving correctly.
+  // One idempotent import pass removes that artefact before anything judges the run's output.
+  const importPass = await importGodotProject({
+    binary: deps.binary,
+    projectPath: deps.projectPath,
+    timeoutSeconds: deps.timeoutSeconds,
+    logsDir: deps.logsDir,
+    checkId: `${deps.checkId}.import`,
+  });
+  if (importPass.spawnError !== null || importPass.exitCode !== 0 || importPass.errorLine !== null) {
+    const reason =
+      importPass.spawnError !== null
+        ? `godot --import pass could not run: ${importPass.spawnError} (command: ${importPass.argv.join(" ")})`
+        : importPass.exitCode !== 0
+          ? `godot --import pass exited with code ${String(importPass.exitCode)}`
+          : `godot --import pass reported an error line: ${String(importPass.errorLine)}`;
+    return withObservations(
+      failedResult({
+        level,
+        checkId: deps.checkId,
+        name,
+        inputRevision: deps.inputRevision,
+        reason,
+        exitStatus: importPass.exitCode,
+        durationMs: importPass.durationMs,
+        logsPath: importPass.logPath,
+        artifacts: [importPass.logPath],
+      }),
+      { stdout: "", stderr: "", engineBuild: null, timedOut: importPass.timedOut, truncated: false },
+    );
+  }
 
   let captured;
   try {
@@ -146,7 +259,7 @@ export async function runGodotHeadless(deps: GodotHeadlessRunDeps): Promise<Godo
         inputRevision: deps.inputRevision,
         reason: `could not run the godot binary: ${message} (command: ${argv.join(" ")})`,
         logsPath: logPath,
-        artifacts: [logPath],
+        artifacts: [logPath, importPass.logPath],
       }),
       { stdout: "", stderr: "", engineBuild: null, timedOut: false, truncated: false },
     );
@@ -193,7 +306,7 @@ export async function runGodotHeadless(deps: GodotHeadlessRunDeps): Promise<Godo
         durationMs: captured.durationMs,
         command,
         ...(engineProbe.version === null ? {} : { engineVersion: engineProbe.version }),
-        artifacts: [logPath],
+        artifacts: [logPath, importPass.logPath],
       }),
       observations,
     );
@@ -212,7 +325,7 @@ export async function runGodotHeadless(deps: GodotHeadlessRunDeps): Promise<Godo
         durationMs: captured.durationMs,
         command,
         ...(engineProbe.version === null ? {} : { engineVersion: engineProbe.version }),
-        artifacts: [logPath],
+        artifacts: [logPath, importPass.logPath],
       }),
       observations,
     );
@@ -231,7 +344,7 @@ export async function runGodotHeadless(deps: GodotHeadlessRunDeps): Promise<Godo
         durationMs: captured.durationMs,
         command,
         ...(engineProbe.version === null ? {} : { engineVersion: engineProbe.version }),
-        artifacts: [logPath],
+        artifacts: [logPath, importPass.logPath],
       }),
       observations,
     );
@@ -249,7 +362,7 @@ export async function runGodotHeadless(deps: GodotHeadlessRunDeps): Promise<Godo
         logsPath: logPath,
         durationMs: captured.durationMs,
         command,
-        artifacts: [logPath],
+        artifacts: [logPath, importPass.logPath],
       }),
       observations,
     );
@@ -268,7 +381,7 @@ export async function runGodotHeadless(deps: GodotHeadlessRunDeps): Promise<Godo
         logsPath: logPath,
         durationMs: captured.durationMs,
         command,
-        artifacts: [logPath],
+        artifacts: [logPath, importPass.logPath],
       }),
       observations,
     );
@@ -285,7 +398,7 @@ export async function runGodotHeadless(deps: GodotHeadlessRunDeps): Promise<Godo
       exitStatus: exitCode,
       durationMs: captured.durationMs,
       logsPath: logPath,
-      artifacts: [logPath],
+      artifacts: [logPath, importPass.logPath],
       reason: `engine exited 0 with no error line (${engineProbe.reason})`,
     }),
     observations,

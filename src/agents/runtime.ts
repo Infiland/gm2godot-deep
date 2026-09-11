@@ -1,5 +1,8 @@
 import type { z } from "zod";
 import type { AgentRoleName } from "../storage/types.ts";
+
+/** Re-exported because every role-scoped public interface here is keyed by it. */
+export type { AgentRoleName };
 import type { Logger } from "../util/log.ts";
 
 /** Roots a role may read from or write into. Anything outside these is denied by the host. */

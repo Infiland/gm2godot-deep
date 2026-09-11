@@ -13,8 +13,8 @@
     "deep-convert": "node src/cli/main.ts",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck",
-    "test": "node --test tests/",
-    "test:integration": "DEEP_INTEGRATION=1 node --test tests/integration/",
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "test:integration": "DEEP_INTEGRATION=1 node --test \"tests/integration/**/*.test.ts\"",
     "demo": "node src/cli/main.ts run --workspace examples/workspace --through report"
   },
   "dependencies": {

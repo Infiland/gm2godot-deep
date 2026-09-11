@@ -98,22 +98,59 @@ function walkSnapshot(root: string): { absolute: string; relative: string }[] {
   return found;
 }
 
-/** Bind each generated file to its source through the converter's per-file `.gmlmap.json`. */
-function generatedFileLinks(baselineDir: string): GeneratedFileLink[] {
+/**
+ * Bind each generated file to its source through the converter's per-file `.gmlmap.json`.
+ *
+ * The map's top-level `source_path` is unreliable: GM2Godot 0.7.74 writes `null` for object scripts (which
+ * compile several event files into one `.gd`) and an absolute path for scripts. Both the top-level value and
+ * `entries[].source_path` are therefore normalized by matching their suffix against the project's real source
+ * files, which is the only form that survives conversion from a staging copy.
+ */
+function generatedFileLinks(baselineDir: string, knownSourcePaths: readonly string[]): GeneratedFileLink[] {
   const managed = listManagedOutputs(baselineDir);
   const mapPaths = new Set(managed.filter((entry) => entry.path.endsWith(".gmlmap.json")).map((entry) => entry.path));
+  const known = [...knownSourcePaths].sort((a, b) => b.length - a.length);
+
+  const normalize = (candidate: unknown): string | null => {
+    if (typeof candidate !== "string" || candidate.length === 0) return null;
+    const posix = candidate.split("\\").join("/");
+    for (const path of known) {
+      if (posix === path || posix.endsWith(`/${path}`)) return path;
+    }
+    return null;
+  };
+
   const links: GeneratedFileLink[] = [];
   for (const entry of managed) {
     if (entry.path.endsWith(".gmlmap.json")) continue;
     const sourceMapPath = `${entry.path}.gmlmap.json`;
+    const hasMap = mapPaths.has(sourceMapPath);
     let sourcePath: string | null = null;
-    if (mapPaths.has(sourceMapPath)) {
+    if (hasMap) {
       const record: unknown = readJsonFile(join(baselineDir, sourceMapPath));
-      if (typeof record === "object" && record !== null && "source_path" in record && typeof record.source_path === "string") {
-        sourcePath = record.source_path.split(sep).join("/");
+      if (typeof record === "object" && record !== null) {
+        const candidates: unknown[] = [];
+        if ("source_path" in record) candidates.push(record.source_path);
+        if ("entries" in record && Array.isArray(record.entries)) {
+          for (const item of record.entries) {
+            if (typeof item === "object" && item !== null && "source_path" in item) candidates.push(item.source_path);
+          }
+        }
+        for (const candidate of candidates) {
+          const normalized = normalize(candidate);
+          if (normalized !== null) {
+            sourcePath = normalized;
+            break;
+          }
+        }
       }
     }
-    links.push({ path: entry.path, sha256: entry.sha256, sourcePath, sourceMapPath: mapPaths.has(sourceMapPath) ? sourceMapPath : null });
+    links.push({
+      path: entry.path,
+      sha256: entry.sha256,
+      sourcePath,
+      sourceMapPath: hasMap ? sourceMapPath : null,
+    });
   }
   return links;
 }
@@ -164,7 +201,13 @@ export async function buildInventory(request: InventoryBuildRequest): Promise<In
   }
   files.sort((a, b) => (a.path < b.path ? -1 : 1));
 
-  const generatedFiles = request.baselineDir === null ? [] : generatedFileLinks(request.baselineDir);
+  const generatedFiles =
+    request.baselineDir === null
+      ? []
+      : generatedFileLinks(
+          request.baselineDir,
+          files.filter((file) => file.classification !== "excluded").map((file) => file.path),
+        );
   const units = buildUnits({ projectName: request.bridge.project.name, files, generatedFiles });
 
   const byClassification: Record<string, number> = {};

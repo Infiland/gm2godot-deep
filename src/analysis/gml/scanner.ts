@@ -12,6 +12,7 @@ import {
 } from "./types.ts";
 import type {
   CallSite,
+  FunctionDefinition,
   GlobalAccess,
   InheritanceCall,
   InstanceCreation,
@@ -99,16 +100,6 @@ const ROOM_FUNCTION_SET: ReadonlySet<string> = new Set(ROOM_FUNCTIONS);
 const GLOBAL_VARIABLE_SET: ReadonlySet<string> = new Set(GLOBAL_VARIABLE_FUNCTIONS);
 const INHERITANCE_SET: ReadonlySet<string> = new Set(INHERITANCE_FUNCTIONS);
 const DYNAMIC_LOOKUP_SET: ReadonlySet<string> = new Set(DYNAMIC_LOOKUP_FUNCTIONS);
-
-/** GML functions the scanner classifies itself; they are known API even when the gml-api list is sparse. */
-const KNOWN_GML_FUNCTIONS: ReadonlySet<string> = new Set<string>([
-  ...INSTANCE_CREATE_FUNCTIONS,
-  ...INSTANCE_DESTROY_FUNCTIONS,
-  ...ROOM_FUNCTIONS,
-  ...GLOBAL_VARIABLE_FUNCTIONS,
-  ...INHERITANCE_FUNCTIONS,
-  ...DYNAMIC_LOOKUP_FUNCTIONS,
-]);
 
 /** Room functions that take no room argument. */
 const ROOMS_WITHOUT_ARGUMENT: ReadonlySet<string> = new Set([
@@ -199,25 +190,6 @@ function dynamicLookupReason(name: string): string {
   return `${name} target name is not statically known`;
 }
 
-function isKnownCallee(name: string, known: KnownNames): boolean {
-  if (KNOWN_GML_FUNCTIONS.has(name)) return true;
-  if (name.startsWith(INSTANCE_DEACTIVATE_PREFIX) || name.startsWith(INSTANCE_ACTIVATE_PREFIX)) return true;
-  return (
-    known.scripts.has(name) ||
-    known.objects.has(name) ||
-    known.rooms.has(name) ||
-    known.sprites.has(name) ||
-    known.sounds.has(name) ||
-    known.fonts.has(name) ||
-    known.tilesets.has(name) ||
-    known.paths.has(name) ||
-    known.sequences.has(name) ||
-    known.shaders.has(name) ||
-    known.extensionFunctions.has(name) ||
-    known.gmlApi.has(name)
-  );
-}
-
 export function scanGml(
   path: string,
   source: string,
@@ -237,6 +209,7 @@ export function scanGml(
   const roomRefs: RoomReference[] = [];
   const resourceRefs: ResourceReference[] = [];
   const inheritanceCalls: InheritanceCall[] = [];
+  const functionDefinitions: FunctionDefinition[] = [];
   const unresolved: UnresolvedReference[] = [];
 
   const significant: number[] = [];
@@ -319,6 +292,37 @@ export function scanGml(
     return undefined;
   };
 
+  const declaredFunctionNames = new Set<string>();
+  const recordFunction = (nameToken: Token): void => {
+    if (declaredFunctionNames.has(nameToken.text)) return;
+    declaredFunctionNames.add(nameToken.text);
+    functionDefinitions.push({ name: nameToken.text, location: located(nameToken) });
+  };
+
+  // Identifiers sitting directly inside a function parameter list. They are parameters, never
+  // top-level declarations, so `NAME = function(…)` must not claim one.
+  const parameterPositions = new Set<number>();
+  const markParameters = (openPosition: number): void => {
+    let depth = 0;
+    for (let position = openPosition; position < count; position += 1) {
+      const token = tokenAt(position);
+      if (token === undefined) break;
+      if (token.kind === "punctuation") {
+        if (token.text === "(" || token.text === "[" || token.text === "{") {
+          depth += 1;
+          continue;
+        }
+        if (token.text === ")" || token.text === "]" || token.text === "}") {
+          depth -= 1;
+          if (depth === 0) return;
+          continue;
+        }
+        continue;
+      }
+      if (depth === 1 && token.kind === "identifier") parameterPositions.add(position);
+    }
+  };
+
   for (let position = 0; position < count; position += 1) {
     const token = tokenAt(position);
     if (token === undefined || token.kind !== "identifier") continue;
@@ -331,6 +335,19 @@ export function scanGml(
       previous !== undefined && previous.kind === "punctuation" && previous.text === ".";
     const precededByFunction =
       previous !== undefined && previous.kind === "identifier" && previous.text === "function";
+
+    if (text === "function") {
+      // `function NAME(params)` declares NAME; a bare `function(params)` is an expression, not a name.
+      const candidate = tokenAt(position + 1);
+      const named = candidate !== undefined && candidate.kind === "identifier";
+      const open = named ? position + 2 : position + 1;
+      const paren = tokenAt(open);
+      if (paren !== undefined && paren.kind === "punctuation" && paren.text === "(") {
+        markParameters(open);
+        if (named && candidate !== undefined) recordFunction(candidate);
+      }
+      continue;
+    }
 
     if (text === "globalvar") {
       for (let cursor = position + 1; cursor < count; cursor += 1) {
@@ -394,6 +411,26 @@ export function scanGml(
     }
 
     if (LANGUAGE_KEYWORDS.has(text)) continue;
+
+    // `NAME = function(params)` declares NAME unless NAME is a local/global declaration or a parameter.
+    const declaredLocal =
+      previous !== undefined &&
+      previous.kind === "identifier" &&
+      (previous.text === "var" || previous.text === "globalvar" || previous.text === "static");
+    if (
+      !precededByDot &&
+      !precededByFunction &&
+      !declaredLocal &&
+      !parameterPositions.has(position) &&
+      next !== undefined &&
+      next.kind === "operator" &&
+      next.text === "=" &&
+      tokenAt(position + 2)?.text === "function" &&
+      tokenAt(position + 3)?.text === "("
+    ) {
+      recordFunction(token);
+      continue;
+    }
 
     if (precededByDot) {
       if (followedByParen) {
@@ -520,17 +557,11 @@ export function scanGml(
       continue;
     }
 
-    if (!isKnownCallee(text, known)) {
-      const macro = resolveMacro(macros, text);
-      unresolved.push({
-        symbol: text,
-        reason:
-          macro !== null
-            ? `call target '${text}' is a macro that resolves to a ${macro.type}; the callee is not statically known`
-            : `call target '${text}' matches no script, object, extension function or GML API entry`,
-        location,
-      });
-    }
+    // Call-target resolution is deliberately *not* recorded here. GameMaker 2.3+ declares functions
+    // inside script resources, and a call names the function, not the resource: a single file cannot
+    // tell a missing function from one declared in another unit. `src/analysis/dependencies.ts` owns
+    // that judgement — it sees every unit's `functionDefinitions` — and records the unknown-call-target
+    // unresolved entries itself. Flagging every callee here would contradict its confirmed `calls` edges.
   }
 
   return {
@@ -545,6 +576,7 @@ export function scanGml(
     roomRefs,
     resourceRefs,
     inheritanceCalls,
+    functionDefinitions,
     unresolved,
   };
 }

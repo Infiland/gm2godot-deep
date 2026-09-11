@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "name": "counter",
+  "provenance": "synthetic",
+  "engine": "4.7.2.stable.official.ed1daf0bf",
+  "randomness": {
+    "mode": "fixed_seed",
+    "seed": 12345,
+    "note": "Not an observation of the original GameMaker runtime. Produced by fixtures/scenarios/counter_trace.gd stepping the generated baseline of the synthetic fixtures/gm-projects/counter fixture (GM2Godot 0.7.74, Godot 4.7.2.stable.official.ed1daf0bf); the baseline's obj_counter was converted from the fixture sources, so this records the port's behaviour, not GameMaker's."
+  },
+  "timing": {
+    "mode": "step_count",
+    "steps": 6
+  },
+  "events": [
+    {
+      "step": 0,
+      "kind": "step",
+      "target": "obj_counter",
+      "payload": {
+        "counter_step": 1,
+        "global.counter": 1,
+        "instance_position": "noone"
+      }
+    },
+    {
+      "step": 1,
+      "kind": "step",
+      "target": "obj_counter",
+      "payload": {
+        "counter_step": 2,
+        "global.counter": 2,
+        "instance_position": "noone"
+      }
+    },
+    {
+      "step": 2,
+      "kind": "step",
+      "target": "obj_counter",
+      "payload": {
+        "counter_step": 3,
+        "global.counter": 3,
+        "instance_position": "noone"
+      }
+    },
+    {
+      "step": 3,
+      "kind": "step",
+      "target": "obj_counter",
+      "payload": {
+        "counter_step": 4,
+        "global.counter": 4,
+        "instance_position": "noone"
+      }
+    },
+    {
+      "step": 4,
+      "kind": "step",
+      "target": "obj_counter",
+      "payload": {
+        "counter_step": 5,
+        "global.counter": 5,
+        "instance_position": "noone"
+      }
+    },
+    {
+      "step": 5,
+      "kind": "step",
+      "target": "obj_counter",
+      "payload": {
+        "counter_step": 6,
+        "global.counter": 6,
+        "instance_position": "noone"
+      }
+    }
+  ]
+}

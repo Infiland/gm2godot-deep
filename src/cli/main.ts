@@ -17,8 +17,8 @@ export interface CommandContext {
 
 export type CommandRunner = (context: CommandContext) => Promise<number>;
 
-/** Exit codes. 4 is "the run finished but reported blocked or failed tasks". */
-export const EXIT = { ok: 0, failure: 1, usage: 2, incomplete: 4 } as const;
+export { EXIT } from "./exit.ts";
+import { EXIT } from "./exit.ts";
 
 const RUNNERS: Record<string, () => Promise<{ run: CommandRunner }>> = {
   init: () => import("./commands/init.ts"),

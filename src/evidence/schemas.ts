@@ -28,6 +28,8 @@ const ObservedStatement = z.strictObject({
   statement: z.string().min(1),
   evidence: z.array(EvidenceRefSchema).min(1),
 });
+/** Assumptions and uncertainties carry `text`, matching the analysis-record contract. */
+const BasedText = z.strictObject({ text: z.string().min(1), basis: Basis });
 
 // ---------------------------------------------------------------- usage
 
@@ -163,8 +165,8 @@ export const AnalysisRecordSchema = z.strictObject({
       expected: z.unknown(),
     }),
   ),
-  assumptions: z.array(EvidencedStatement),
-  uncertainties: z.array(EvidencedStatement),
+  assumptions: z.array(BasedText),
+  uncertainties: z.array(BasedText),
   blockers: z.array(z.strictObject({ text: z.string().min(1), evidence: z.array(EvidenceRefSchema) })),
   evidence: z.array(
     z.strictObject({

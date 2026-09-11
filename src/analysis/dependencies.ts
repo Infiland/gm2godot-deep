@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { DeepError } from "../util/result.ts";
+import { sha256Text } from "../util/sha256.ts";
 import { join } from "node:path";
 import { scanGml, type KnownNames } from "./gml/scanner.ts";
 import type { SourceLocation } from "./gml/types.ts";
@@ -23,8 +25,12 @@ export interface DependencyBuildRequest {
   readonly readFile?: (absolutePath: string) => string;
 }
 
-function location(path: string, at: SourceLocation): EvidenceLocation {
-  return { path, line: at.line, column: at.column, snippet: at.snippet };
+function location(path: string, at: SourceLocation, sha256ByPath: ReadonlyMap<string, string>): EvidenceLocation {
+  const sha256 = sha256ByPath.get(path);
+  if (sha256 === undefined) {
+    throw new DeepError("GM2DEEP-EVIDENCE-STALE", `no digest recorded for ${path}`, { path });
+  }
+  return { path, sha256, line: at.line, column: at.column, snippet: at.snippet };
 }
 
 const RESOURCE_SET_BY_DIRECTORY = [
@@ -103,11 +109,17 @@ export function buildDependencies(request: DependencyBuildRequest): DependencyRe
   const unresolved: SymbolUnresolvedRecord[] = [];
   const globalTouches = new Map<string, GlobalTouch[]>();
 
+  // A GameMaker script resource holds functions; a call names the function, not the resource. Resolve
+  // function names to their owning unit from the declarations the scanner recorded.
+  const ownerByFunction = new Map<string, string>();
   const read = request.readFile ?? ((absolutePath: string) => readFileSync(absolutePath, "utf8"));
   const sources: { path: string; source: string }[] = [];
+  const sha256ByPath = new Map<string, string>();
   for (const unit of request.units) {
     for (const path of unit.sourcePaths) {
-      if (path.endsWith(".gml")) sources.push({ path, source: read(join(request.snapshotDir, path)) });
+      const source = read(join(request.snapshotDir, path));
+      sha256ByPath.set(path, unit.sourceHashes[path] ?? sha256Text(source));
+      if (path.endsWith(".gml")) sources.push({ path, source });
     }
   }
   const macros = collectMacros(sources);
@@ -124,6 +136,17 @@ export function buildDependencies(request: DependencyBuildRequest): DependencyRe
     for (const path of unit.sourcePaths) {
       if (!path.endsWith(".gml")) continue;
       const scan = scanGml(path, read(join(request.snapshotDir, path)), macros, known);
+      for (const definition of scan.functionDefinitions) {
+        if (!ownerByFunction.has(definition.name)) ownerByFunction.set(definition.name, unit.id);
+      }
+    }
+  }
+
+  for (const unit of request.units) {
+    if (!unit.analysisRequired) continue;
+    for (const path of unit.sourcePaths) {
+      if (!path.endsWith(".gml")) continue;
+      const scan = scanGml(path, read(join(request.snapshotDir, path)), macros, known);
 
       for (const call of scan.calls) {
         const scriptId = `script:${call.name}`;
@@ -134,7 +157,7 @@ export function buildDependencies(request: DependencyBuildRequest): DependencyRe
             to: scriptId,
             kind: "calls",
             confidence: "confirmed",
-            evidence: [location(path, call.location)],
+            evidence: [location(path, call.location, sha256ByPath)],
           });
           continue;
         }
@@ -142,7 +165,7 @@ export function buildDependencies(request: DependencyBuildRequest): DependencyRe
         if (api !== undefined) {
           const id = apiUsageId(unit.id, api.name);
           const previous = apiUsage.get(id);
-          const evidence = [location(path, call.location)];
+          const evidence = [location(path, call.location, sha256ByPath)];
           apiUsage.set(id, {
             id,
             unitId: unit.id,
@@ -155,11 +178,24 @@ export function buildDependencies(request: DependencyBuildRequest): DependencyRe
           continue;
         }
         if (known.extensionFunctions.has(call.name)) continue;
+        const owner = ownerByFunction.get(call.name);
+        if (owner !== undefined && owner !== unit.id) {
+          addEdge({
+            id: edgeId(unit.id, owner, "calls"),
+            from: unit.id,
+            to: owner,
+            kind: "calls",
+            confidence: "confirmed",
+            evidence: [location(path, call.location, sha256ByPath)],
+            basis: `${call.name} is declared in ${owner}`,
+          });
+          continue;
+        }
         unresolved.push({
           unitId: unit.id,
           symbol: call.name,
           reason: `call target ${call.name} matches no script, object, extension function or GML API entry`,
-          evidence: [location(path, call.location)],
+          evidence: [location(path, call.location, sha256ByPath)],
         });
       }
 
@@ -172,7 +208,7 @@ export function buildDependencies(request: DependencyBuildRequest): DependencyRe
           to: `object:${creation.objectName}`,
           kind: "instance_creation",
           confidence: inferred ? "inferred" : "confirmed",
-          evidence: [location(path, creation.location)],
+          evidence: [location(path, creation.location, sha256ByPath)],
           ...(inferred ? { basis: "object name came from a macro resolution rather than a literal" } : {}),
         });
       }
@@ -187,7 +223,7 @@ export function buildDependencies(request: DependencyBuildRequest): DependencyRe
             to: targetId,
             kind: "resource_reference",
             confidence: "confirmed",
-            evidence: [location(path, resource.location)],
+            evidence: [location(path, resource.location, sha256ByPath)],
           });
         }
       }
@@ -197,13 +233,13 @@ export function buildDependencies(request: DependencyBuildRequest): DependencyRe
           unitId: unit.id,
           symbol: reference.symbol,
           reason: reference.reason,
-          evidence: [location(path, reference.location)],
+          evidence: [location(path, reference.location, sha256ByPath)],
         });
       }
 
       for (const access of [...scan.globalWrites, ...scan.globalReads]) {
         const touches = globalTouches.get(access.name);
-        const touch: GlobalTouch = { unitId: unit.id, path, evidence: location(path, access.location) };
+        const touch: GlobalTouch = { unitId: unit.id, path, evidence: location(path, access.location, sha256ByPath) };
         if (touches === undefined) globalTouches.set(access.name, [touch]);
         else touches.push(touch);
       }
@@ -286,7 +322,13 @@ export function buildDependencies(request: DependencyBuildRequest): DependencyRe
 
 function structuralEvidence(request: DependencyBuildRequest, unitId: string, snippet: string): EvidenceLocation {
   const unit = request.units.find((candidate) => candidate.id === unitId);
-  const path =
-    unit?.sourcePaths.find((candidate) => candidate.endsWith(".yy")) ?? unit?.sourcePaths[0] ?? `${unitId}.yy`;
-  return { path, line: 1, column: 1, snippet };
+  const path = unit?.sourcePaths.find((candidate) => candidate.endsWith(".yy")) ?? unit?.sourcePaths[0];
+  if (path === undefined) {
+    throw new DeepError("GM2DEEP-EVIDENCE-STALE", `unit ${unitId} has no source file to cite`, { unitId });
+  }
+  const sha256 = unit?.sourceHashes[path];
+  if (sha256 === undefined) {
+    throw new DeepError("GM2DEEP-EVIDENCE-STALE", `no digest recorded for ${path}`, { path });
+  }
+  return { path, sha256, line: 1, column: 1, snippet };
 }

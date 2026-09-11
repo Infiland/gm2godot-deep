@@ -13,6 +13,7 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import type { Logger } from "../util/log.ts";
 import { packageVersion } from "../util/package.ts";
 import { nowIso } from "../util/ids.ts";
@@ -369,6 +370,20 @@ function percentOf(numerator: number, denominator: number): number | null {
   return Math.round((numerator / denominator) * 10_000) / 100;
 }
 
+/**
+ * The last recorded reason a task is BLOCKED/FAILED: the newest `failure`, `check_failed`,
+ * `analysis_blocked`, `budget_exceeded`, `repair` or rejected-`integration` event. `null` when the
+ * events carry none — the caller then says so rather than inventing a reason.
+ */
+export function recordedFailureReason(events: readonly TaskEventRecord[]): string | null {
+  for (const event of events.slice().reverse()) {
+    const review = reviewDetail(event);
+    if (review !== null && review.state === "rejected") return reasonText(event.detail);
+    if (FAILURE_EVENT_KINDS.includes(event.kind)) return reasonText(event.detail);
+  }
+  return null;
+}
+
 /** Read an artifact, recording the failure instead of hiding it behind a default value. */
 function attempt<T>(path: string, errors: ReadError[], read: () => T): T | null {
   try {
@@ -715,7 +730,8 @@ export async function buildReport(deps: ReportDeps): Promise<ReportBuildResult> 
   const validationTotals: Record<string, number> = {};
   for (const row of validationRows) {
     const bucket = (validationByLevel[row.level] ??= { passed: 0, failed: 0, skipped: 0, inconclusive: 0 });
-    if (bucket[row.state] !== undefined) bucket[row.state] += 1;
+    const seen = bucket[row.state];
+    if (seen !== undefined) bucket[row.state] = seen + 1;
     validationTotals[row.state] = (validationTotals[row.state] ?? 0) + 1;
   }
 
@@ -756,7 +772,7 @@ export async function buildReport(deps: ReportDeps): Promise<ReportBuildResult> 
   const unresolvedReferences: UnresolvedEntry[] = [];
   for (const record of analyses) {
     for (const uncertainty of record.uncertainties) {
-      uncertainties.push({ unitId: record.unitId, text: uncertainty.statement, basis: uncertainty.basis });
+      uncertainties.push({ unitId: record.unitId, text: uncertainty.text, basis: uncertainty.basis });
     }
     for (const unresolved of record.dependencies.unresolved) {
       unresolvedReferences.push({ unitId: record.unitId, symbol: unresolved.symbol, reason: unresolved.reason });
@@ -888,17 +904,18 @@ export async function writeReport(
 
 // ------------------------------------------------------------------ markdown
 
-function cell(value: string, width: number): string {
-  return value.length > width ? `${value.slice(0, Math.max(0, width - 1))}…` : value.padEnd(width);
-}
-
 function table(header: readonly string[], rows: readonly (readonly string[])[]): string {
   if (rows.length === 0) return "_none_";
   const widths = header.map((title, index) =>
     Math.max(title.length, ...rows.map((row) => (row[index] ?? "").length)),
   );
   const line = (cells: readonly string[]): string =>
-    `| ${cells.map((value, index) => cell(value, widths[index] ?? 0)).join(" | ")} |`;
+    `| ${cells
+      .map((value, index) => {
+        const width = widths[index] ?? 0;
+        return value.length > width ? `${value.slice(0, Math.max(0, width - 1))}…` : value.padEnd(width);
+      })
+      .join(" | ")} |`;
   return [
     line(header),
     `| ${widths.map((width) => "-".repeat(width)).join(" | ")} |`,
@@ -1000,9 +1017,11 @@ function renderMarkdown(report: ReportJson): string {
   );
   lines.push(
     `- sandbox configured: ${adapters.sandboxConfigured}`,
-    `- sandbox resolved: ${adapters.sandboxResolved} (${adapters.sandboxAvailable ? "available" : "unavailable"}) — ${adapters.sandboxDetail}`,
+    adapters.sandboxAvailable
+      ? `- sandbox resolved: ${adapters.sandboxResolved} (available)`
+      : `- sandbox resolved: ${adapters.sandboxResolved} (unavailable) — ${adapters.sandboxDetail}`,
     adapters.unsafeLocalChecks.length === 0
-      ? "- sandbox used per check: none recorded an unsafe-local backend"
+      ? `- ${UNSAFE_LOCAL_BANNER}: not used by any check`
       : `- ${UNSAFE_LOCAL_BANNER}: ${adapters.unsafeLocalChecks.join(", ")}`,
     "",
   );
@@ -1183,6 +1202,3 @@ function renderMarkdown(report: ReportJson): string {
 
   return `${lines.join("\n").trimEnd()}\n`;
 }
-
-/** Re-exported so callers can type a check without importing the validation layer. */
-export type ReportCheck = ValidationResult;
