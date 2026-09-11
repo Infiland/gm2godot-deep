@@ -189,6 +189,12 @@ if HAVE_QT:
             if self.unsafe.isChecked() and QMessageBox.question(self,"Confirm unsafe local mode","UNSAFE LOCAL MODE disables process isolation. Continue?",QMessageBox.Yes|QMessageBox.No)!=QMessageBox.Yes:return
             if QMessageBox.question(self,"Confirm implementation","This will modify the port workspace and run implementation plus validation. Continue?",QMessageBox.Yes|QMessageBox.No)!=QMessageBox.Yes:return
             self._start(build_execute_command(self._settings()),4)
+        def refresh_status(self):
+            workspace = self.fields["Workspace"].text()
+            if not workspace:
+                QMessageBox.information(self, "Status", "Choose a workspace first.")
+                return
+            self._start(build_cli_command(["status", "--workspace", workspace, "--json"]), 1)
         def open_report(self):
             p=Path(self.fields["Workspace"].text())/"evidence"/"reports"/"report.md"
             if not p.exists(): QMessageBox.information(self,"Report","No evidence report has been generated yet."); return
