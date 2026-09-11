@@ -722,6 +722,11 @@ export class Repo {
     return Number(result.changes);
   }
 
+  deleteCacheEntriesForUnit(unitId: string): number {
+    const result = this.db.prepare("DELETE FROM cache_entries WHERE unit_id = ?").run(unitId);
+    return Number(result.changes);
+  }
+
   // --------------------------------------------------- validation results
 
   upsertValidation(row: ValidationRow): void {

@@ -46,7 +46,7 @@ export const ConfigSchema = z.strictObject({
     expectedVersionPrefix: nonEmpty.default("4.7.2"),
     bootFrames: z.number().int().min(0).max(10_000).default(0),
     timeoutSeconds: z.number().int().positive().max(3_600).default(120),
-  }),
+  }).prefault({}),
   agent: z.strictObject({
     runtime: AgentRuntimeSchema.default("mock"),
     provider: z.string().nullable().default(null),
@@ -59,12 +59,12 @@ export const ConfigSchema = z.strictObject({
       perTaskCostUsd: z.number().nonnegative().nullable().default(2),
       perRunTokens: z.number().int().positive().nullable().default(2_000_000),
       perRunCostUsd: z.number().nonnegative().nullable().default(20),
-    }),
-  }),
+    }).prefault({}),
+  }).prefault({}),
   concurrency: z.strictObject({
     analysis: z.number().int().positive().max(32).default(4),
     implementation: z.number().int().positive().max(32).default(1),
-  }),
+  }).prefault({}),
   sandbox: z.strictObject({
     backend: SandboxBackendSchema.default("auto"),
     dockerImage: nonEmpty.default("node:22-bookworm-slim"),
@@ -72,17 +72,17 @@ export const ConfigSchema = z.strictObject({
     memoryMb: z.number().int().positive().default(2048),
     network: z.boolean().default(false),
     timeoutSeconds: z.number().int().positive().max(3_600).default(300),
-  }),
+  }).prefault({}),
   policy: z.strictObject({
     allowRemoteSourceUpload: z.boolean().default(false),
     allowUnsafeLocal: z.boolean().default(false),
     requireReviewFor: z.array(ReviewTriggerSchema).default(["shared_interface", "high_risk"]),
     maxRepairAttempts: z.number().int().min(0).max(10).default(2),
     maxTaskAttempts: z.number().int().min(1).max(10).default(3),
-  }),
+  }).prefault({}),
   report: z.strictObject({
     includeSourceSnippets: z.boolean().default(false),
-  }),
+  }).prefault({}),
 });
 
 export type Config = z.output<typeof ConfigSchema>;

@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "source": {
+    "path": "/Users/infi/Documents/Github/gm2godot-deep/fixtures/gm-projects/counter"
+  },
+  "workspace": {
+    "path": "/Users/infi/Documents/Github/gm2godot-deep/examples/workspace"
+  },
+  "gm2godot": {
+    "checkout": "/Users/infi/Documents/Github/GM2Godot",
+    "python": "/Users/infi/Documents/Github/.gm2godot-campaign-venv/bin/python",
+    "expectedVersions": ["0.7.74"],
+    "platform": "macos",
+    "groups": ["assets", "project", "wip"],
+    "only": [],
+    "allowPartial": true,
+    "timeoutSeconds": 900
+  },
+  "godot": {
+    "binary": "/Applications/Godot.app/Contents/MacOS/Godot",
+    "expectedVersion": "4.7.2.stable.official.ed1daf0bf",
+    "expectedVersionPrefix": "4.7.2",
+    "bootFrames": 0,
+    "timeoutSeconds": 120
+  },
+  "agent": {
+    "runtime": "mock",
+    "provider": null,
+    "model": null,
+    "thinkingLevel": "low",
+    "maxTurnsPerTask": 40,
+    "taskTimeoutSeconds": 600,
+    "budgets": {
+      "perTaskTokens": 200000,
+      "perTaskCostUsd": 2,
+      "perRunTokens": 2000000,
+      "perRunCostUsd": 20
+    }
+  },
+  "concurrency": {
+    "analysis": 4,
+    "implementation": 1
+  },
+  "sandbox": {
+    "backend": "auto",
+    "dockerImage": "node:22-bookworm-slim",
+    "cpus": 2,
+    "memoryMb": 2048,
+    "network": false,
+    "timeoutSeconds": 300
+  },
+  "policy": {
+    "allowRemoteSourceUpload": false,
+    "allowUnsafeLocal": false,
+    "requireReviewFor": ["shared_interface", "high_risk"],
+    "maxRepairAttempts": 2,
+    "maxTaskAttempts": 3
+  },
+  "report": {
+    "includeSourceSnippets": false
+  }
+}

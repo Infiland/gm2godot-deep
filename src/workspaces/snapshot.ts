@@ -149,7 +149,15 @@ export async function snapshotSource(
     throw new DeepError("GM2DEEP-SOURCE-MISSING", `source project directory does not exist: ${sourcePath}`);
   }
   if (existsSync(destDir)) {
-    throw new DeepError("GM2DEEP-SNAPSHOT-DEST-EXISTS", `snapshot destination already exists: ${destDir}`, { destDir });
+    // `createWorkspace` pre-creates `source/` as an empty directory; only a non-empty destination is a
+    // conflict, because writing into it would mix two projects.
+    const existing = statSync(destDir).isDirectory() ? readdirSync(destDir) : null;
+    if (existing === null || existing.length > 0) {
+      throw new DeepError("GM2DEEP-SNAPSHOT-DEST-EXISTS", `snapshot destination already exists: ${destDir}`, {
+        destDir,
+        entries: existing?.slice(0, 20) ?? null,
+      });
+    }
   }
   const { files, excluded } = collectSourceFiles(sourcePath);
   if (files.length === 0) {

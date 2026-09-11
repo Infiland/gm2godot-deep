@@ -1,0 +1,125 @@
+{
+  "$GMProject": "v1",
+  "%Name": "Counter",
+  "AudioGroups": [
+    {
+      "$GMAudioGroup": "v1",
+      "%Name": "audiogroup_default",
+      "exportDir": "",
+      "name": "audiogroup_default",
+      "resourceType": "GMAudioGroup",
+      "resourceVersion": "2.0",
+      "targets": -1
+    }
+  ],
+  "configs": {
+    "children": [],
+    "name": "Default"
+  },
+  "Folders": [
+    {
+      "$GMFolder": "",
+      "%Name": "Objects",
+      "folderPath": "folders/Objects.yy",
+      "name": "Objects",
+      "resourceType": "GMFolder",
+      "resourceVersion": "2.0"
+    },
+    {
+      "$GMFolder": "",
+      "%Name": "Rooms",
+      "folderPath": "folders/Rooms.yy",
+      "name": "Rooms",
+      "resourceType": "GMFolder",
+      "resourceVersion": "2.0"
+    },
+    {
+      "$GMFolder": "",
+      "%Name": "Scripts",
+      "folderPath": "folders/Scripts.yy",
+      "name": "Scripts",
+      "resourceType": "GMFolder",
+      "resourceVersion": "2.0"
+    },
+    {
+      "$GMFolder": "",
+      "%Name": "Sprites",
+      "folderPath": "folders/Sprites.yy",
+      "name": "Sprites",
+      "resourceType": "GMFolder",
+      "resourceVersion": "2.0"
+    }
+  ],
+  "IncludedFiles": [],
+  "MetaData": {
+    "IDEVersion": "2026.0.0.16"
+  },
+  "name": "Counter",
+  "resources": [
+    {
+      "id": {
+        "name": "obj_counter",
+        "path": "objects/obj_counter/obj_counter.yy"
+      }
+    },
+    {
+      "id": {
+        "name": "obj_counter_child",
+        "path": "objects/obj_counter_child/obj_counter_child.yy"
+      }
+    },
+    {
+      "id": {
+        "name": "rm_main",
+        "path": "rooms/rm_main/rm_main.yy"
+      }
+    },
+    {
+      "id": {
+        "name": "scr_math",
+        "path": "scripts/scr_math/scr_math.yy"
+      }
+    },
+    {
+      "id": {
+        "name": "scr_state",
+        "path": "scripts/scr_state/scr_state.yy"
+      }
+    },
+    {
+      "id": {
+        "name": "spr_counter",
+        "path": "sprites/spr_counter/spr_counter.yy"
+      }
+    }
+  ],
+  "resourceType": "GMProject",
+  "resourceVersion": "2.0",
+  "RoomOrderNodes": [
+    {
+      "roomId": {
+        "name": "rm_main",
+        "path": "rooms/rm_main/rm_main.yy"
+      }
+    }
+  ],
+  "TextureGroups": [
+    {
+      "$GMTextureGroup": "",
+      "%Name": "Default",
+      "autocrop": true,
+      "border": 2,
+      "compressFormat": "bz2",
+      "customOptions": "",
+      "directory": "",
+      "groupParent": null,
+      "isScaled": true,
+      "loadType": "default",
+      "mipsToGenerate": 0,
+      "name": "Default",
+      "resourceType": "GMTextureGroup",
+      "resourceVersion": "2.0",
+      "targets": -1
+    }
+  ]
+}
