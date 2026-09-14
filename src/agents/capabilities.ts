@@ -1,14 +1,25 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { CodexConnection } from "./external/codex.ts";
 import { runProcess } from "./external/process.ts";
 import { OpenCodeClient } from "./external/opencode.ts";
+import { isVerifiedFree } from "../models/freePolicy.ts";
+import { verifyZenCatalog } from "../models/zenCatalog.ts";
 export interface ProviderCapability {
   runtime: string;
   installed: boolean;
   authenticated: boolean | null;
-  models: { id: string; name: string; provider?: string }[];
+  models: {
+    id: string;
+    name: string;
+    provider?: string;
+    providerName?: string;
+    authenticated?: boolean | null;
+    freeEligible?: boolean;
+    available?: boolean;
+    toolcall?: boolean;
+  }[];
   reason?: string;
 }
 /** Discovery performs no inference and returns no credentials or raw agent output. */
@@ -17,6 +28,8 @@ export async function discoverAgent(options: {
   executable?: string;
   endpoint?: string;
   password?: string;
+  provider?: string | null;
+  freeOnly?: boolean;
   signal: AbortSignal;
 }): Promise<ProviderCapability> {
   options.signal.throwIfAborted();
@@ -76,11 +89,18 @@ export async function discoverAgent(options: {
     const client = new OpenCodeClient({
       executable,
       cwd,
+      ...(options.provider ? { provider: options.provider } : {}),
+      ...(options.freeOnly !== undefined ? { freeOnly: options.freeOnly } : {}),
       ...(options.endpoint ? { endpoint: options.endpoint } : {}),
       ...(options.password ? { password: options.password } : {}),
     });
     try {
       const models = await client.catalog(options.signal);
+      const authenticated = knownOpenCodeProviders();
+      const verifiedFree = new Set(
+        (await verifyZenCatalog(models.filter(isVerifiedFree), options.signal).catch(() => []))
+          .map((model) => `${model.provider}/${model.id}`),
+      );
       return {
         ...base,
         authenticated: null,
@@ -88,9 +108,15 @@ export async function discoverAgent(options: {
           id: m.id,
           name: m.name,
           provider: m.provider,
+          providerName: m.providerName ?? m.provider,
+          authenticated: m.connected === true || authenticated.has(m.provider) || verifiedFree.has(`${m.provider}/${m.id}`)
+            ? true : m.provider === "opencode" ? null : false,
+          freeEligible: verifiedFree.has(`${m.provider}/${m.id}`),
+          available: m.status !== "deprecated" && m.toolcall,
+          toolcall: m.toolcall,
         })),
         reason:
-          "Authentication availability is provider-specific; a free synthetic connection check verifies dispatch.",
+          "Provider sign-in is detected locally; model availability and limits are checked again when tasks run. Discovery does not send prompts.",
       };
     } finally {
       await client.close();
@@ -106,6 +132,23 @@ export async function discoverAgent(options: {
     };
   } finally {
     rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+/** Return provider identities only; do not expose credentials or copy unrelated auth into discovery. */
+function knownOpenCodeProviders(): Set<string> {
+  try {
+    const path = join(process.env["XDG_DATA_HOME"] ?? join(homedir(), ".local", "share"), "opencode", "auth.json");
+    const entries: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) return new Set();
+    return new Set(Object.entries(entries).filter(([, value]) => {
+      if (!value || typeof value !== "object") return false;
+      const auth = value as Record<string, unknown>;
+      return (auth["type"] === "api" && typeof auth["key"] === "string" && auth["key"].length > 0)
+        || (auth["type"] === "oauth" && typeof auth["refresh"] === "string" && auth["refresh"].length > 0);
+    }).map(([provider]) => provider));
+  } catch {
+    return new Set();
   }
 }
 

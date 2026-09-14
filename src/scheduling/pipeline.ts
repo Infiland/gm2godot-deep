@@ -1,3 +1,7 @@
+import { emitImplementationTasks } from "./progress.ts";
+import { nextAttempt } from "./attempts.ts";
+import { roleAgentConfig } from "../agents/factory.ts";
+import { recoveryError, resultRecoveryError } from "./recovery.ts";
 import { ModelBudgetGate } from "./modelBudgetGate.ts";
 import { provenanceForResult } from "../evidence/provenance.ts";
 import { existsSync, mkdirSync } from "node:fs";
@@ -110,6 +114,7 @@ export interface PipelineOptions {
   readonly through: Phase;
   readonly execute: boolean;
   readonly maxWorkers: number | null;
+  readonly currentMaxWorkers?: () => number;
   readonly taskFilter: readonly string[];
   readonly allowStaleBaseline: boolean;
   readonly signal: AbortSignal;
@@ -440,7 +445,15 @@ export async function runPipeline(
   const pipeline: PipelineRun = {
     options,
     repo: options.repo,
-    machine: new TaskMachine(options.repo),
+    machine: new TaskMachine(options.repo, (taskId, state, attempt, detail) =>
+      options.onProgress?.({
+        phase: "implementation",
+        taskId,
+        state: state.toLowerCase(),
+        attempt,
+        ...(detail && typeof detail === "object" ? detail : {}),
+      }),
+    ),
     leases: new LeaseManager(options.repo, `${String(process.pid)}-${run.id}`),
     budget: new BudgetLedger(
       options.repo,
@@ -467,25 +480,75 @@ export async function runPipeline(
   const activeAgents = new Set<string>();
   pipeline.runtime = {
     ...bundle.runtime,
-    run: async (request) => {
+    run: async (incoming) => {
+      const request = {
+        ...incoming,
+        attempt:
+          incoming.role === "implementer" || incoming.role === "patch_reviewer"
+            ? incoming.attempt
+            : nextAttempt(
+                options.workspace.root,
+                incoming.taskId,
+                incoming.role,
+              ),
+      };
       options.signal.throwIfAborted();
       pipeline.budget.assertNotExceeded(request.taskId);
-      const identity = `${request.taskId}:${request.role}:${request.attempt}`;
-      try {
-        const result = await budgetGate.run(request, (limited) => {
-          activeAgents.add(identity);
+      const identity = `${run.id}:${request.taskId}:${request.role}:${request.attempt}`;
+      const selected = roleAgentConfig(options.workspace.config, request.role);
+      const metadata = {
+        agentId: identity,
+        label:
+          state.units.find((unit) => unit.id === request.taskId)?.name ??
+          request.taskId,
+        attempt: request.attempt,
+        provider: selected.provider,
+        model: selected.model,
+        runtime: selected.runtime,
+      };
+      const tools = request.tools.map((tool) => ({
+        ...tool,
+        execute: async (...args: Parameters<typeof tool.execute>) => {
           options.onProgress?.({
             phase: "agent",
+            ...metadata,
             taskId: request.taskId,
             role: request.role,
             state: "running",
             activeAgents: activeAgents.size,
+            summary: `Using ${tool.name}`,
           });
-          return bundle.runtime.run(limited);
-        });
+          return tool.execute(...args);
+        },
+      }));
+      try {
+        const result = await budgetGate.run(
+          { ...request, tools },
+          (limited) => {
+            activeAgents.add(identity);
+            if (request.role === "analyst")
+              options.onProgress?.({
+                phase: "research",
+                taskId: request.taskId,
+                ...metadata,
+                role: request.role,
+                state: "running",
+              });
+            options.onProgress?.({
+              phase: "agent",
+              ...metadata,
+              taskId: request.taskId,
+              role: request.role,
+              state: "running",
+              activeAgents: activeAgents.size,
+            });
+            return bundle.runtime.run(limited);
+          },
+        );
         activeAgents.delete(identity);
         options.onProgress?.({
           phase: "agent",
+          ...metadata,
           taskId: request.taskId,
           role: request.role,
           state: result.outcome,
@@ -493,20 +556,30 @@ export async function runPipeline(
           usage: result.usage,
           cumulativeUsage: options.repo.totalsForWorkspace(),
           provenance: result.provenance ?? null,
+          provider: result.provenance?.provider ?? selected.provider,
+          model: result.provenance?.model ?? selected.model,
+          reason: result.reason ?? null,
         });
         options.signal.throwIfAborted();
+        const recovery = options.workspace.config.host
+          ? resultRecoveryError(result)
+          : null;
+        if (recovery) throw recovery;
         return result;
       } catch (error) {
         if (activeAgents.delete(identity))
           options.onProgress?.({
             phase: "agent",
+            ...metadata,
             taskId: request.taskId,
             role: request.role,
             state: "failed",
             activeAgents: activeAgents.size,
             reason: error instanceof Error ? error.message : String(error),
           });
-        throw error;
+        throw options.workspace.config.host
+          ? (recoveryError(error) ?? error)
+          : error;
       }
     },
   };
@@ -532,6 +605,7 @@ export async function runPipeline(
       options.signal.throwIfAborted();
       options.repo.updateRunPhase(run.id, "plan");
       await phasePlan(pipeline);
+      emitImplementationTasks(pipeline);
     }
     if (
       options.execute &&

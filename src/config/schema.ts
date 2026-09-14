@@ -77,6 +77,8 @@ export const ConfigSchema = z.strictObject({
   host: z
     .strictObject({
       snapshotPath: nonEmpty,
+      researchModelIdentity: z.string().nullable().default(null),
+      freeProviderConcurrency: z.number().int().min(1).max(32).default(1),
       baselinePath: nonEmpty,
       maxSeconds: z.number().positive().nullable().default(null),
     })

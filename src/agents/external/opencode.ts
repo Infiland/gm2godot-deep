@@ -13,6 +13,8 @@ export interface OpenCodeModel {
   cost: unknown;
   toolcall: boolean;
   status?: string;
+  providerName?: string;
+  connected?: boolean;
 }
 export function localEndpoint(endpoint: string): string {
   const url = new URL(endpoint);
@@ -161,6 +163,7 @@ export class OpenCodeClient implements AgentTransport {
     const result = (await this.request("/provider", undefined, signal)) as {
       all?: {
         id: string;
+        name?: string;
         models: Record<
           string,
           {
@@ -172,12 +175,15 @@ export class OpenCodeClient implements AgentTransport {
           }
         >;
       }[];
+      connected?: string[];
     };
     return (result.all ?? []).flatMap((p) =>
       Object.values(p.models).map((m) => ({
         id: m.id,
         name: m.name,
         provider: p.id,
+        providerName: p.name ?? p.id,
+        connected: result.connected?.includes(p.id) ?? false,
         cost: m.cost,
         toolcall: m.capabilities?.toolcall === true,
         ...(m.status ? { status: m.status } : {}),

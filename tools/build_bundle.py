@@ -56,7 +56,7 @@ def build_bundle(platform: str, output: Path, source_revision: str, client_revis
         with archive.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         fragment = {
-            **provenance, "minClientVersion": "0.8.0",
+            **provenance, "minClientVersion": "0.8.1",
             "packages": {platform: {
                 "url": f"{release_base.rstrip('/')}/{archive.name}", "sha256": digest,
                 "entrypoint": provenance["entrypoint"], "runtime": runtime,

@@ -1,3 +1,4 @@
+import { emitImplementationTasks } from "./progress.ts";
 import { orderTasks } from "./taskOrder.ts";
 /**
  * Phase orchestration: analyze → plan → implement → validate → report.
@@ -168,6 +169,7 @@ export async function phaseImplement(run: PipelineRun): Promise<void> {
   const { workspace, repo } = run.options;
   const state = run.state;
   const port = ensurePort(run);
+  emitImplementationTasks(run);
   const filter = new Set(run.options.taskFilter);
   let tasks = orderTasks([
     ...repo.listTasksInState("READY"),

@@ -54,6 +54,7 @@ export const RequestSchema = z.strictObject({
   protocolVersion: z.literal(PROTOCOL_VERSION),
   id: z.union([z.string(), z.number()]),
   method: z.enum([
+    "configure",
     "capabilities",
     "research",
     "convert",
@@ -75,3 +76,10 @@ export interface HostEvent {
   result?: unknown;
   error?: { code: string; message: string; recoverable: boolean };
 }
+
+export const ConfigureParamsSchema = z.strictObject({
+  jobRoot: z.string().optional(),
+  jobId: z.string().optional(),
+  analysisWorkers: z.number().int().min(1).max(32),
+  freeProviderConcurrency: z.number().int().min(1).max(32).optional(),
+});

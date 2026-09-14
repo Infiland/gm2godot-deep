@@ -1,3 +1,5 @@
+import { verifySelection, selectionChanged } from "./selection.ts";
+import { readMonitoring } from "./monitoring.ts";
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverAgent, discoverPi } from "../agents/capabilities.ts";
@@ -18,6 +20,7 @@ import { acquireJobLock } from "./lock.ts";
 import { prepareHostJob, verifyHostInputs } from "./prepare.ts";
 import {
   HostSettingsSchema,
+  ConfigureParamsSchema,
   ResearchParamsSchema,
   type HostEvent,
   type HostRequest,
@@ -28,6 +31,7 @@ interface ActiveJob {
   record: JobRecord;
   controller: AbortController;
   done: Promise<void>;
+  analysisWorkers: number;
 }
 
 /** One running project per subprocess. The host can still pause or inspect it while work is in flight. */
@@ -79,7 +83,20 @@ export class HostService {
       const base = {
         protocolVersion: 1,
         extensionVersion: packageVersion(),
-        methods: ["research", "convert", "status", "pause", "resume", "cancel"],
+        features: {
+          monitoring: true,
+          liveConfiguration: true,
+          resumeModelSelection: true,
+        },
+        methods: [
+          "configure",
+          "research",
+          "convert",
+          "status",
+          "pause",
+          "resume",
+          "cancel",
+        ],
         runtimes: ["mock", "pi", "codex", "claude", "opencode"],
         maxAnalysisWorkers: 32,
         requiresPython: false,
@@ -102,6 +119,8 @@ export class HostService {
         };
       const provider = await discoverAgent({
         runtime: settings.runtime,
+        ...(settings.provider ? { provider: settings.provider } : {}),
+        freeOnly: settings.freeOnly,
         ...(settings.executable ? { executable: settings.executable } : {}),
         ...(settings.endpoint ? { endpoint: settings.endpoint } : {}),
         signal: AbortSignal.timeout(20000),
@@ -151,7 +170,36 @@ export class HostService {
       }
     }
     const record = this.record(request.params);
-    if (request.method === "status") return record;
+    if (request.method === "status")
+      return {
+        ...record,
+        monitoring: readMonitoring(
+          record.jobRoot,
+          this.active?.record.jobId === record.jobId,
+        ),
+      };
+    if (request.method === "configure") {
+      const params = ConfigureParamsSchema.parse(request.params);
+      if (!["running", "paused", "prepared", "review"].includes(record.state))
+        throw new DeepError(
+          "HOST_CONFIGURATION_UNAVAILABLE",
+          "This job is not running or resumable",
+        );
+      const { jobRoot: _root, jobId: _id, ...settings } = params;
+      updateResumeSettings(record, settings);
+      const config = openWorkspace(record.jobRoot).config;
+      if (this.active?.record.jobId === record.jobId)
+        this.active.analysisWorkers = config.concurrency.analysis;
+      const result = {
+        analysisWorkers: config.concurrency.analysis,
+        requestedAnalysisWorkers: params.analysisWorkers,
+        freeProviderConcurrency: config.host?.freeProviderConcurrency ?? 1,
+      };
+      this.send(
+        journalEvent(record, "progress", { phase: "configuration", ...result }),
+      );
+      return result;
+    }
     if (request.method === "pause" || request.method === "cancel") {
       record.state = request.method === "pause" ? "pausing" : "cancelled";
       saveJob(record);
@@ -191,6 +239,21 @@ export class HostService {
       );
       return record;
     }
+    if (
+      request.method === "resume" &&
+      request.params["settings"] !== undefined
+    ) {
+      const supplied = request.params["settings"] as Record<string, unknown>;
+      const current = openWorkspace(record.jobRoot).config.agent;
+      const candidate = updateResumeSettings(record, supplied, true).agent;
+      if (selectionChanged(current, candidate))
+        await verifySelection(candidate);
+      if (this.active !== null || this.preparing)
+        throw new DeepError(
+          "HOST_BUSY",
+          "Another operation started while checking the selected model",
+        );
+    }
     return this.start(
       record,
       request.method === "convert" ? "convert" : record.operation,
@@ -204,7 +267,24 @@ export class HostService {
   ): unknown {
     const unlock = acquireJobLock(record.jobRoot);
     try {
-      if (settings !== undefined) updateResumeSettings(record, settings);
+      if (settings !== undefined) {
+        if (record.state !== "paused")
+          throw new DeepError(
+            "HOST_PAUSE_REQUIRED",
+            "Pause the job before changing its model",
+          );
+        updateResumeSettings(record, settings);
+        const selected = openWorkspace(record.jobRoot).config.agent;
+        this.send(
+          journalEvent(record, "settings_changed", {
+            runtime: selected.runtime,
+            provider: selected.provider,
+            model: selected.model,
+            roleOverrides: selected.roleOverrides,
+            freeOnly: selected.freeOnly,
+          }),
+        );
+      }
     } catch (error) {
       unlock();
       throw error;
@@ -218,7 +298,13 @@ export class HostService {
     const done = new Promise<void>((resolveDone) =>
       setImmediate(resolveDone),
     ).then(() => this.execute(record, controller).finally(unlock));
-    this.active = { record, controller, done };
+    this.active = {
+      record,
+      controller,
+      done,
+      analysisWorkers: openWorkspace(record.jobRoot).config.concurrency
+        .analysis,
+    };
     return {
       jobId: record.jobId,
       jobRoot: record.jobRoot,
@@ -325,6 +411,8 @@ export class HostService {
         through: record.operation === "research" ? "plan" : "report",
         execute: record.operation === "convert",
         maxWorkers: null,
+        currentMaxWorkers: () =>
+          this.active?.analysisWorkers ?? workspace.config.concurrency.analysis,
         taskFilter: [],
         allowStaleBaseline: false,
         signal: controller.signal,

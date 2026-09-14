@@ -18,6 +18,8 @@ export interface DispatchOutcome<T> {
 
 export interface DispatchOptions<T> {
   readonly maxWorkers: number;
+  readonly currentMaxWorkers?: () => number;
+  readonly stopOnError?: (error: unknown) => boolean;
   readonly leases: LeaseManager;
   readonly budget: BudgetLedger | null;
   readonly logger: Logger;
@@ -25,7 +27,10 @@ export interface DispatchOptions<T> {
   /** Called as each item settles, so a caller can persist progress incrementally. */
   readonly onSettled?: (outcome: DispatchOutcome<T>) => void | Promise<void>;
   /** Consulted before each dispatch; a `false` result stops dispatching new work. */
-  readonly canDispatch?: (item: DispatchItem<T>) => { allowed: boolean; reason: string | null };
+  readonly canDispatch?: (item: DispatchItem<T>) => {
+    allowed: boolean;
+    reason: string | null;
+  };
 }
 
 /**
@@ -33,7 +38,10 @@ export interface DispatchOptions<T> {
  * skipped rather than run twice; a budget that is already exceeded stops new dispatches without aborting
  * work that is in flight.
  */
-export async function dispatchAll<T>(items: readonly DispatchItem<T>[], options: DispatchOptions<T>): Promise<DispatchOutcome<T>[]> {
+export async function dispatchAll<T>(
+  items: readonly DispatchItem<T>[],
+  options: DispatchOptions<T>,
+): Promise<DispatchOutcome<T>[]> {
   const results: DispatchOutcome<T>[] = [];
   const queue = [...items];
   let stopped: string | null = null;
@@ -43,50 +51,109 @@ export async function dispatchAll<T>(items: readonly DispatchItem<T>[], options:
     await options.onSettled?.(outcome);
   };
 
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      if (options.signal.aborted) return;
-      const item = queue.shift();
-      if (item === undefined) return;
-
-      if (stopped !== null) {
-        await settle({ id: item.id, ok: false, value: null, error: null, skippedReason: stopped });
-        continue;
-      }
-      if (options.budget !== null) {
-        const decision = options.budget.decide(null);
-        if (decision.exceeded) {
-          stopped = `run budget exceeded: ${decision.reason ?? "unknown"}`;
-          await settle({ id: item.id, ok: false, value: null, error: null, skippedReason: stopped });
-          continue;
-        }
-      }
-      const gate = options.canDispatch?.(item);
-      if (gate !== undefined && !gate.allowed) {
-        await settle({ id: item.id, ok: false, value: null, error: null, skippedReason: gate.reason ?? "not dispatchable" });
-        continue;
-      }
-      if (!options.leases.acquire(item.id)) {
-        await settle({ id: item.id, ok: false, value: null, error: null, skippedReason: "lease held by another worker" });
-        continue;
-      }
-      try {
-        const value = await item.run(options.signal);
-        await settle({ id: item.id, ok: true, value, error: null, skippedReason: null });
-      } catch (error) {
-        await settle({ id: item.id, ok: false, value: null, error, skippedReason: null });
-        if (error instanceof DeepError && error.code === "GM2DEEP-BUDGET-EXCEEDED") {
-          stopped = error.message;
-        }
-      } finally {
-        options.leases.release(item.id);
-      }
+  const execute = async (item: DispatchItem<T>): Promise<void> => {
+    if (options.budget !== null) {
+      const decision = options.budget.decide(null);
+      if (decision.exceeded)
+        stopped = `run budget exceeded: ${decision.reason ?? "unknown"}`;
+    }
+    if (stopped !== null) {
+      await settle({
+        id: item.id,
+        ok: false,
+        value: null,
+        error: null,
+        skippedReason: stopped,
+      });
+      return;
+    }
+    const gate = options.canDispatch?.(item);
+    if (gate !== undefined && !gate.allowed) {
+      await settle({
+        id: item.id,
+        ok: false,
+        value: null,
+        error: null,
+        skippedReason: gate.reason ?? "not dispatchable",
+      });
+      return;
+    }
+    if (!options.leases.acquire(item.id)) {
+      await settle({
+        id: item.id,
+        ok: false,
+        value: null,
+        error: null,
+        skippedReason: "lease held by another worker",
+      });
+      return;
+    }
+    try {
+      const value = await item.run(options.signal);
+      await settle({
+        id: item.id,
+        ok: true,
+        value,
+        error: null,
+        skippedReason: null,
+      });
+    } catch (error) {
+      if (
+        options.stopOnError?.(error) ||
+        (error instanceof DeepError && error.code === "GM2DEEP-BUDGET-EXCEEDED")
+      )
+        stopped = error instanceof Error ? error.message : String(error);
+      await settle({
+        id: item.id,
+        ok: false,
+        value: null,
+        error,
+        skippedReason: null,
+      });
+    } finally {
+      options.leases.release(item.id);
     }
   };
-
-  const workers = Math.max(1, Math.min(options.maxWorkers, items.length));
-  if (items.length === 0) return results;
-  options.logger.debug(`dispatching ${items.length} item(s) with ${workers} worker(s)`);
-  await Promise.all(Array.from({ length: workers }, () => worker()));
+  const active = new Set<Promise<void>>();
+  const capacity = (): number =>
+    Math.max(
+      1,
+      Math.min(32, options.currentMaxWorkers?.() ?? options.maxWorkers),
+    );
+  options.logger.debug(
+    `dispatching ${items.length} item(s) with ${capacity()} worker(s)`,
+  );
+  while (queue.length || active.size) {
+    while (
+      queue.length &&
+      !stopped &&
+      !options.signal.aborted &&
+      active.size < capacity()
+    ) {
+      const item = queue.shift()!;
+      const pending = execute(item).finally(() => active.delete(pending));
+      active.add(pending);
+    }
+    if (!active.size) break;
+    // Wake periodically to apply a raised limit even when every current model is still busy.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      ...active,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, 100);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+  // Unstarted work remains pending on recoverable stops and is durably reconstructed on resume.
+  if (stopped && !options.stopOnError)
+    for (const item of queue)
+      await settle({
+        id: item.id,
+        ok: false,
+        value: null,
+        error: null,
+        skippedReason: stopped,
+      });
   return results;
 }
