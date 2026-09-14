@@ -433,10 +433,7 @@ export async function runPipeline(
     plan: null,
     drafts: new Map(),
     baselineId: readBaselineId(options.workspace),
-    python:
-      options.workspace.config.host === null
-        ? resolvePython(options.workspace.config).path
-        : "",
+    python: "",
     godotBinary: resolveGodotBinary(options.workspace.config)?.path ?? null,
     godotVersion: null,
   };
@@ -591,6 +588,8 @@ async function phaseInventory(run: PipelineRun): Promise<void> {
     state.bridge = host.inventory;
     state.gmlApi = host.gmlApiEntries;
   } else {
+    // Validate immutable inputs before requiring the optional developer bridge.
+    state.python = resolvePython(workspace.config).path;
     const bridgeOptions = {
       checkout: workspace.config.gm2godot.checkout,
       python: state.python,
