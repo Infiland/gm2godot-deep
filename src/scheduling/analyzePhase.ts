@@ -1,3 +1,5 @@
+import { recoveryError } from "./recovery.ts";
+import { roleAgentConfig } from "../agents/factory.ts";
 import { canonicalJson } from "../util/json.ts";
 /**
  * Phase orchestration: analyze → plan → implement → validate → report.
@@ -139,13 +141,15 @@ export async function phaseAnalyze(run: PipelineRun): Promise<void> {
       gm2godotVersion: state.probe?.gm2godotVersion ?? null,
       godotVersion: workspace.config.godot.expectedVersion,
       promptVersion: PROMPT_VERSION,
-      model: canonicalJson({
-        runtime: workspace.config.agent.runtime,
-        provider: workspace.config.agent.provider,
-        model: workspace.config.agent.model,
-        roles: workspace.config.agent.roleOverrides,
-        freeOnly: workspace.config.agent.freeOnly,
-      }),
+      model:
+        workspace.config.host?.researchModelIdentity ??
+        canonicalJson({
+          runtime: workspace.config.agent.runtime,
+          provider: workspace.config.agent.provider,
+          model: workspace.config.agent.model,
+          roles: workspace.config.agent.roleOverrides,
+          freeOnly: workspace.config.agent.freeOnly,
+        }),
     });
     cacheKeys.set(unit.id, key);
     items.push({
@@ -244,6 +248,24 @@ export async function phaseAnalyze(run: PipelineRun): Promise<void> {
     });
   }
 
+  const selected = roleAgentConfig(workspace.config, "analyst");
+  run.options.onProgress?.({
+    phase: "tasks",
+    tasks: state.units.map((unit) => ({
+      taskId: unit.id,
+      label: unit.name,
+      phase: "research",
+      role: "analyst",
+      state: unit.analysisRequired ? "pending" : "skipped",
+      attempt: 0,
+      provider: selected.provider,
+      model: selected.model,
+      summary: unit.analysisRequired
+        ? "Awaiting research"
+        : "Accounted for by deterministic conversion",
+    })),
+  });
+  let interrupted: Error | null = null;
   let completed = 0;
   let blocked = 0;
   run.options.onProgress?.({
@@ -254,6 +276,12 @@ export async function phaseAnalyze(run: PipelineRun): Promise<void> {
   });
   const outcomes = await dispatchAll(items, {
     maxWorkers: run.options.maxWorkers ?? workspace.config.concurrency.analysis,
+    ...(run.options.currentMaxWorkers
+      ? { currentMaxWorkers: run.options.currentMaxWorkers }
+      : {}),
+    ...(workspace.config.host
+      ? { stopOnError: (error: unknown) => recoveryError(error) !== null }
+      : {}),
     leases: run.leases,
     budget: run.budget,
     logger: run.options.logger,
@@ -262,6 +290,8 @@ export async function phaseAnalyze(run: PipelineRun): Promise<void> {
     onSettled: async (outcome) => {
       if (outcome.skippedReason !== null)
         run.skipped.push(`${outcome.id}: ${outcome.skippedReason}`);
+      const recovery = recoveryError(outcome.error);
+      if (workspace.config.host && recovery) interrupted = recovery;
       if (!outcome.ok) {
         run.failed.push(`${outcome.id}: ${String(outcome.error)}`);
         run.options.onProgress?.({
@@ -278,13 +308,40 @@ export async function phaseAnalyze(run: PipelineRun): Promise<void> {
       run.options.onProgress?.({
         phase: "research",
         taskId: outcome.id,
-        state: outcome.ok ? "completed" : "blocked",
+        state: outcome.ok ? "completed" : recovery ? "paused" : "blocked",
+        reason: outcome.ok
+          ? null
+          : (outcome.skippedReason ?? String(outcome.error)),
+        ...(outcome.value
+          ? {
+              summary: [
+                outcome.value.purpose.text,
+                ...outcome.value.behavior.observed
+                  .slice(0, 3)
+                  .map((entry) => `Observed: ${entry.statement}`),
+                ...outcome.value.behavior.inferred
+                  .slice(0, 3)
+                  .map((entry) => `Inferred: ${entry.statement}`),
+              ]
+                .join("\n")
+                .slice(0, 4000),
+              artifact: analysisPathFor(
+                workspace.paths.evidenceAnalyses,
+                outcome.id,
+              ),
+              provider: outcome.value.producedBy.provider ?? null,
+              model: outcome.value.producedBy.model ?? null,
+            }
+          : { summary: "Research needs attention; progress is saved." }),
         completed,
         total: toAnalyze.length,
         blocked,
       });
     },
   });
+  if (interrupted) throw interrupted;
+  run.options.signal.throwIfAborted();
+  run.budget.assertNotExceeded(null);
   for (const outcome of outcomes) {
     if (outcome.ok) continue;
     repo.setUnitState(outcome.id, "BLOCKED");

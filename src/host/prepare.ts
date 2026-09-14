@@ -80,6 +80,7 @@ export async function prepareHostJob(
     workspace: { path: root },
     gm2godot: { checkout: "", expectedVersions: [input.gm2godotVersion] },
     host: {
+      freeProviderConcurrency: s.freeProviderConcurrency,
       snapshotPath: join(root, "host-snapshot.json"),
       baselinePath: resolve(params.baselinePath),
       maxSeconds: s.budgets?.maxSeconds ?? null,

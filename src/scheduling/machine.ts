@@ -20,13 +20,21 @@ export const LEGAL_TRANSITIONS: Record<TaskState, readonly TaskState[]> = {
 };
 
 /** Edges that only a recorded reason may take, so a silent re-run cannot look like progress. */
-export const REASON_REQUIRED: readonly string[] = ["ACCEPTED->READY", "BLOCKED->READY", "FAILED->READY", "CANCELLED->READY"];
+export const REASON_REQUIRED: readonly string[] = [
+  "ACCEPTED->READY",
+  "BLOCKED->READY",
+  "FAILED->READY",
+  "CANCELLED->READY",
+];
 
 export type TransitionReason = "invalidation" | "resume" | "retry";
 
 export class IllegalTransitionError extends DeepError {
   constructor(from: TaskState, to: TaskState) {
-    super("GM2DEEP-ILLEGAL-TRANSITION", `cannot move from ${from} to ${to}`, { from, to });
+    super("GM2DEEP-ILLEGAL-TRANSITION", `cannot move from ${from} to ${to}`, {
+      from,
+      to,
+    });
     this.name = "IllegalTransitionError";
   }
 }
@@ -46,38 +54,79 @@ export interface TransitionOptions {
 export class TaskMachine {
   readonly repo: Repo;
 
-  constructor(repo: Repo) {
+  readonly onTransition:
+    | ((
+        taskId: string,
+        state: TaskState,
+        attempt: number,
+        detail: unknown,
+      ) => void)
+    | undefined;
+  constructor(
+    repo: Repo,
+    onTransition?: (
+      taskId: string,
+      state: TaskState,
+      attempt: number,
+      detail: unknown,
+    ) => void,
+  ) {
     this.repo = repo;
+    this.onTransition = onTransition;
   }
 
   static canTransition(from: TaskState, to: TaskState): boolean {
     return LEGAL_TRANSITIONS[from].includes(to);
   }
 
-  transition(taskId: string, to: TaskState, options: TransitionOptions = {}): void {
+  transition(
+    taskId: string,
+    to: TaskState,
+    options: TransitionOptions = {},
+  ): void {
     const task = this.repo.getTask(taskId);
-    if (task === null) throw new DeepError("GM2DEEP-TASK-MISSING", `no task ${taskId}`);
+    if (task === null)
+      throw new DeepError("GM2DEEP-TASK-MISSING", `no task ${taskId}`);
     const from = task.state;
-    if (!TaskMachine.canTransition(from, to)) throw new IllegalTransitionError(from, to);
+    if (!TaskMachine.canTransition(from, to))
+      throw new IllegalTransitionError(from, to);
     const edge = `${from}->${to}`;
     if (REASON_REQUIRED.includes(edge) && options.reason === undefined) {
-      throw new DeepError("GM2DEEP-TRANSITION-REASON-REQUIRED", `${edge} requires a recorded reason`, { edge });
+      throw new DeepError(
+        "GM2DEEP-TRANSITION-REASON-REQUIRED",
+        `${edge} requires a recorded reason`,
+        { edge },
+      );
     }
 
-    const attempt = options.incrementAttempt === true ? task.attempt + 1 : task.attempt;
+    const attempt =
+      options.incrementAttempt === true ? task.attempt + 1 : task.attempt;
     transact(this.repo.db as Database, () => {
       this.repo.db
-        .prepare("UPDATE tasks SET state = ?, attempt = ?, updated_at = ? WHERE id = ?")
-        .run(to, attempt, new Date().toISOString().replace(/\.\d{3}Z$/, "Z"), taskId);
+        .prepare(
+          "UPDATE tasks SET state = ?, attempt = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(
+          to,
+          attempt,
+          new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+          taskId,
+        );
       this.repo.appendEvent({
         taskId,
         kind: options.eventKind ?? "state",
         fromState: from,
         toState: to,
         attempt,
-        detail: { ...(typeof options.detail === "object" && options.detail !== null ? options.detail : { detail: options.detail }), ...(options.reason === undefined ? {} : { reason: options.reason }) },
+        detail: {
+          ...(typeof options.detail === "object" && options.detail !== null
+            ? options.detail
+            : { detail: options.detail }),
+          ...(options.reason === undefined ? {} : { reason: options.reason }),
+        },
       });
     });
+    this.onTransition?.(taskId, to, attempt, options.detail);
   }
 
   /** Record a non-transition fact (policy denial, lease expiry, review verdict) against a task. */
