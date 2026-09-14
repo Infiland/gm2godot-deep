@@ -1,3 +1,5 @@
+import { HostSnapshotSchema } from "../../src/host/protocol.ts";
+import { readJsonFile } from "../../src/util/json.ts";
 /**
  * Shared test environment helpers.
  *
@@ -23,7 +25,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 
-import { snapshotSource, type SnapshotRecord } from "../../src/workspaces/snapshot.ts";
+import {
+  snapshotSource,
+  type SnapshotRecord,
+} from "../../src/workspaces/snapshot.ts";
 import {
   bridgeGmlApi,
   bridgeInventory,
@@ -32,20 +37,31 @@ import {
   type GmlApiEntry,
   type Gm2GodotProbe,
 } from "../../src/adapters/gm2godot/bridge.ts";
-import { buildInventory, type InventoryRecord } from "../../src/indexing/inventory.ts";
+import {
+  buildInventory,
+  type InventoryRecord,
+} from "../../src/indexing/inventory.ts";
 import { openDatabase, type Database } from "../../src/storage/db.ts";
 import { Repo } from "../../src/storage/repo.ts";
 import { sha256Text } from "../../src/util/sha256.ts";
 import { ConfigSchema, type Config } from "../../src/config/schema.ts";
 
-export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+export const REPO_ROOT = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+);
 
 /** The synthetic GameMaker LTS 2026 project every indexing/analysis test runs against. */
-export const FIXTURE_PROJECT = join(REPO_ROOT, "fixtures", "gm-projects", "counter");
+export const FIXTURE_PROJECT = join(
+  REPO_ROOT,
+  "fixtures",
+  "gm-projects",
+  "counter",
+);
 
-export const GM2GODOT_CHECKOUT = process.env["GM2GODOT_CHECKOUT"] ?? "/Users/infi/Documents/Github/GM2Godot";
-export const GM2GODOT_PYTHON =
-  process.env["GM2GODOT_PYTHON"] ?? "/Users/infi/Documents/Github/.gm2godot-campaign-venv/bin/python";
+export const GM2GODOT_CHECKOUT = process.env["GM2GODOT_CHECKOUT"] ?? "";
+export const GM2GODOT_PYTHON = process.env["GM2GODOT_PYTHON"] ?? "";
 
 export interface TempDir {
   readonly path: string;
@@ -66,7 +82,8 @@ function makeWritable(root: string): void {
     } catch {
       return;
     }
-    for (const entry of readdirSync(root, { withFileTypes: true })) makeWritable(join(root, entry.name));
+    for (const entry of readdirSync(root, { withFileTypes: true }))
+      makeWritable(join(root, entry.name));
     return;
   }
   try {
@@ -127,16 +144,21 @@ export interface FixtureEnvironment extends TempDir {
 }
 
 /**
- * Copy the fixture into a temp project, optionally mutate the copy, snapshot it, and run the real
- * GM2Godot bridge over the snapshot. Returns the inventory the pipeline would build.
+ * Copy the fixture into a temp project, optionally mutate the copy, snapshot it, and use a committed host inventory for offline tests. Explicit
+ * DEEP_INTEGRATION plus checkout/interpreter variables enables a real bridge refresh. Returns the inventory the pipeline would build.
  */
-export async function loadFixture(options: {
-  readonly prefix?: string;
-  readonly mutate?: (projectDir: string) => void;
-} = {}): Promise<FixtureEnvironment> {
+export async function loadFixture(
+  options: {
+    readonly prefix?: string;
+    readonly mutate?: (projectDir: string) => void;
+  } = {},
+): Promise<FixtureEnvironment> {
   const temp = tempDir(options.prefix ?? "gm2deep-fixture");
   try {
-    const bridgeOptions = { checkout: GM2GODOT_CHECKOUT, python: GM2GODOT_PYTHON };
+    const bridgeOptions = {
+      checkout: GM2GODOT_CHECKOUT,
+      python: GM2GODOT_PYTHON,
+    };
     const projectDir = join(temp.path, "project");
     cpSync(FIXTURE_PROJECT, projectDir, { recursive: true });
     options.mutate?.(projectDir);
@@ -144,9 +166,28 @@ export async function loadFixture(options: {
     const snapshotDir = join(temp.path, "source-snapshot");
     const snapshot = await snapshotSource(projectDir, snapshotDir);
     const evidenceDir = join(temp.path, "evidence");
-    const bridge = await bridgeInventory(bridgeOptions, snapshotDir);
-    const gmlApi = await bridgeGmlApi(bridgeOptions);
-    const probe = await probeGm2Godot(bridgeOptions);
+    const fixture = HostSnapshotSchema.parse(
+      readJsonFile(join(REPO_ROOT, "tests", "fixtures", "counter-host.json")),
+    );
+    const live =
+      process.env["DEEP_INTEGRATION"] === "1" &&
+      GM2GODOT_CHECKOUT &&
+      GM2GODOT_PYTHON;
+    const bridge = live
+      ? await bridgeInventory(bridgeOptions, snapshotDir)
+      : fixture.inventory;
+    const gmlApi = live
+      ? await bridgeGmlApi(bridgeOptions)
+      : fixture.gmlApiEntries;
+    const probe = live
+      ? await probeGm2Godot(bridgeOptions)
+      : {
+          gm2godotVersion: fixture.gm2godotVersion,
+          pythonVersion: "fixture",
+          pythonExecutable: "fixture",
+          checkout: "fixture",
+          commit: null,
+        };
     const inventory = await buildInventory({
       snapshot,
       snapshotDir,
@@ -157,7 +198,17 @@ export async function loadFixture(options: {
       evidenceInventoryDir: evidenceDir,
     });
 
-    return { ...temp, projectDir, snapshotDir, evidenceDir, snapshot, probe, bridge, gmlApi, inventory };
+    return {
+      ...temp,
+      projectDir,
+      snapshotDir,
+      evidenceDir,
+      snapshot,
+      probe,
+      bridge,
+      gmlApi,
+      inventory,
+    };
   } catch (error) {
     temp.cleanup();
     throw error;
@@ -239,14 +290,15 @@ process.exit(0);
 }
 
 /** Write the stub converter and a placeholder checkout `main.py`; returns the paths a config needs. */
-export function writeStubConverter(root: string, mode: StubConversionMode): StubConverter {
-  const python = join(root, "stub-gm2godot-python");
-  writeFileSync(python, stubConverterSource(mode), "utf8");
-  chmodSync(python, 0o755);
+export function writeStubConverter(
+  root: string,
+  mode: StubConversionMode,
+): StubConverter {
+  const python = process.execPath;
   const checkout = join(root, "stub-checkout");
   mkdirSync(checkout, { recursive: true });
   const mainPy = join(checkout, "main.py");
-  writeFileSync(mainPy, "# stub checkout: the stub converter stands in for GM2Godot's main.py\n", "utf8");
+  writeFileSync(mainPy, stubConverterSource(mode), "utf8");
   return { python, checkout, mainPy };
 }
 
@@ -301,13 +353,28 @@ export interface SyntheticBaseline {
 }
 
 /** Write a `gm2godot/conversion_manifest.json` + `conversion_attempt.json` pair to `dir`. */
-export function writeSyntheticBaseline(dir: string, spec: BaselineSpec = {}): SyntheticBaseline {
+export function writeSyntheticBaseline(
+  dir: string,
+  spec: BaselineSpec = {},
+): SyntheticBaseline {
   const manifest = {
     format_version: spec.manifestFormatVersion ?? 2,
     conversion: {
       state: spec.attemptState ?? "success",
-      converters: { requested: 15, executed: 15, completed: 15, skipped: 0, failed: 0 },
-      resources: { requested: 16, executed: 16, completed: 15, skipped: 1, failed: 0 },
+      converters: {
+        requested: 15,
+        executed: 15,
+        completed: 15,
+        skipped: 0,
+        failed: 0,
+      },
+      resources: {
+        requested: 16,
+        executed: 16,
+        completed: 15,
+        skipped: 1,
+        failed: 0,
+      },
       failed_step: null,
       failure_phase: null,
     },

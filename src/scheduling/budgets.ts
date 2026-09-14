@@ -30,25 +30,58 @@ export class BudgetLedger {
   readonly repo: Repo;
   readonly runId: string;
   readonly ceilings: BudgetCeilings;
+  readonly cumulative: boolean;
 
-  constructor(repo: Repo, runId: string, ceilings: BudgetCeilings) {
+  constructor(
+    repo: Repo,
+    runId: string,
+    ceilings: BudgetCeilings,
+    cumulative = false,
+  ) {
+    this.cumulative = cumulative;
     this.repo = repo;
     this.runId = runId;
     this.ceilings = ceilings;
   }
 
-  charge(taskId: string | null, usage: { input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; reported: boolean }): BudgetDecision {
+  charge(
+    taskId: string | null,
+    usage: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+      costUsd: number;
+      reported: boolean;
+    },
+  ): BudgetDecision {
     this.repo.charge({ runId: this.runId, taskId, ...usage });
     return this.decide(taskId);
   }
 
   decide(taskId: string | null): BudgetDecision {
-    const run = this.repo.totalsForRun(this.runId);
-    const task = taskId === null ? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0, reported: false } : this.repo.totalsForTask(taskId);
+    const run = this.cumulative
+      ? this.repo.totalsForWorkspace()
+      : this.repo.totalsForRun(this.runId);
+    const task =
+      taskId === null
+        ? {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            costUsd: 0,
+            reported: false,
+          }
+        : this.repo.totalsForTask(taskId);
     const taskTokens = tokensOf(task);
     const runTokens = tokensOf(run);
 
-    if (taskId !== null && this.ceilings.perTaskTokens !== null && taskTokens > this.ceilings.perTaskTokens) {
+    if (
+      taskId !== null &&
+      this.ceilings.perTaskTokens !== null &&
+      taskTokens > this.ceilings.perTaskTokens
+    ) {
       return {
         exceeded: true,
         scope: "task",
@@ -57,7 +90,11 @@ export class BudgetLedger {
         task,
       };
     }
-    if (taskId !== null && this.ceilings.perTaskCostUsd !== null && task.costUsd > this.ceilings.perTaskCostUsd) {
+    if (
+      taskId !== null &&
+      this.ceilings.perTaskCostUsd !== null &&
+      task.costUsd > this.ceilings.perTaskCostUsd
+    ) {
       return {
         exceeded: true,
         scope: "task",
@@ -66,7 +103,10 @@ export class BudgetLedger {
         task,
       };
     }
-    if (this.ceilings.perRunTokens !== null && runTokens > this.ceilings.perRunTokens) {
+    if (
+      this.ceilings.perRunTokens !== null &&
+      runTokens > this.ceilings.perRunTokens
+    ) {
       return {
         exceeded: true,
         scope: "run",
@@ -75,7 +115,10 @@ export class BudgetLedger {
         task,
       };
     }
-    if (this.ceilings.perRunCostUsd !== null && run.costUsd > this.ceilings.perRunCostUsd) {
+    if (
+      this.ceilings.perRunCostUsd !== null &&
+      run.costUsd > this.ceilings.perRunCostUsd
+    ) {
       return {
         exceeded: true,
         scope: "run",
@@ -90,17 +133,28 @@ export class BudgetLedger {
   assertNotExceeded(taskId: string | null): void {
     const decision = this.decide(taskId);
     if (decision.exceeded) {
-      throw new DeepError("GM2DEEP-BUDGET-EXCEEDED", decision.reason ?? "budget exceeded", {
-        scope: decision.scope,
-        run: decision.run,
-        task: decision.task,
-      });
+      throw new DeepError(
+        "GM2DEEP-BUDGET-EXCEEDED",
+        decision.reason ?? "budget exceeded",
+        {
+          scope: decision.scope,
+          run: decision.run,
+          task: decision.task,
+        },
+      );
     }
   }
 }
 
 export function ceilingsFrom(config: {
-  agent: { budgets: { perTaskTokens: number | null; perTaskCostUsd: number | null; perRunTokens: number | null; perRunCostUsd: number | null } };
+  agent: {
+    budgets: {
+      perTaskTokens: number | null;
+      perTaskCostUsd: number | null;
+      perRunTokens: number | null;
+      perRunCostUsd: number | null;
+    };
+  };
 }): BudgetCeilings {
   return {
     perTaskTokens: config.agent.budgets.perTaskTokens,

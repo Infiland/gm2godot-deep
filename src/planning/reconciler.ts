@@ -1,3 +1,4 @@
+import { provenanceForResult } from "../evidence/provenance.ts";
 import { z } from "zod";
 import { DeepError } from "../util/result.ts";
 import { canonicalJson } from "../util/json.ts";
@@ -7,7 +8,12 @@ import { buildToolSpecs } from "../agents/toolSpecs.ts";
 import { roleConfig } from "../agents/roles.ts";
 import { reconcilerSystemPrompt } from "../agents/prompts.ts";
 import type { AgentRuntime, ToolContext } from "../agents/runtime.ts";
-import type { AnalysisRecord, ContractRecord, PlanRecord, ProducedBy } from "../evidence/schemas.ts";
+import type {
+  AnalysisRecord,
+  ContractRecord,
+  PlanRecord,
+  ProducedBy,
+} from "../evidence/schemas.ts";
 import type { AnalysisUnit } from "../indexing/units.ts";
 import type { DependencyReport } from "../analysis/edges.ts";
 import type { InventoryRecord } from "../indexing/inventory.ts";
@@ -17,10 +23,26 @@ import type { Workspace } from "../workspaces/workspace.ts";
 import { writeContract, writePlan } from "../evidence/store.ts";
 
 export interface ReconcilerPayload {
-  readonly contracts: readonly { concern: string; version: number; rules: ContractRecord["rules"] }[];
-  readonly unitStrategies: readonly { unitId: string; strategy: AnalysisRecord["strategy"]; rationale: string }[];
-  readonly conflictResolutions: readonly { concern: string; resolution: string; evidence: unknown[] }[];
-  readonly blockages: readonly { unitId: string; reason: string; requiredApproval: string }[];
+  readonly contracts: readonly {
+    concern: string;
+    version: number;
+    rules: ContractRecord["rules"];
+  }[];
+  readonly unitStrategies: readonly {
+    unitId: string;
+    strategy: AnalysisRecord["strategy"];
+    rationale: string;
+  }[];
+  readonly conflictResolutions: readonly {
+    concern: string;
+    resolution: string;
+    evidence: unknown[];
+  }[];
+  readonly blockages: readonly {
+    unitId: string;
+    reason: string;
+    requiredApproval: string;
+  }[];
 }
 
 export interface ReconcileInput {
@@ -37,7 +59,10 @@ export interface ReconcileInput {
   readonly signal: AbortSignal;
   readonly maxTurns: number;
   readonly timeoutSeconds: number;
-  readonly budgets: { readonly tokens: number | null; readonly costUsd: number | null };
+  readonly budgets: {
+    readonly tokens: number | null;
+    readonly costUsd: number | null;
+  };
   readonly credentials: Readonly<Record<string, string>>;
   readonly logger?: Logger;
 }
@@ -56,7 +81,9 @@ export function validateReconcilerPayload(
 ): readonly string[] {
   const problems: string[] = [];
   const known = new Set(input.unitIds);
-  const seedByConcern = new Map(input.seeds.map((seed) => [seed.concern, seed]));
+  const seedByConcern = new Map(
+    input.seeds.map((seed) => [seed.concern, seed]),
+  );
 
   for (const strategy of payload.unitStrategies) {
     if (!known.has(strategy.unitId)) {
@@ -65,10 +92,15 @@ export function validateReconcilerPayload(
     }
     const analysis = input.analyses.get(strategy.unitId);
     if (analysis === undefined) {
-      problems.push(`unitStrategies names ${strategy.unitId}, which has no validated analysis`);
+      problems.push(
+        `unitStrategies names ${strategy.unitId}, which has no validated analysis`,
+      );
       continue;
     }
-    if (analysis.strategy !== strategy.strategy && strategy.rationale.trim().length < 20) {
+    if (
+      analysis.strategy !== strategy.strategy &&
+      strategy.rationale.trim().length < 20
+    ) {
       problems.push(
         `unitStrategies changes ${strategy.unitId} from ${analysis.strategy} to ${strategy.strategy} without a stated reason`,
       );
@@ -78,11 +110,20 @@ export function validateReconcilerPayload(
   for (const contract of payload.contracts) {
     const seed = seedByConcern.get(contract.concern);
     if (seed === undefined) {
-      problems.push(`contracts adds concern ${contract.concern}, which was not seeded from upstream evidence`);
+      problems.push(
+        `contracts adds concern ${contract.concern}, which was not seeded from upstream evidence`,
+      );
       continue;
     }
-    const changed = canonicalJson(contract.rules.map((rule) => rule.statement)) !== canonicalJson(seed.rules.map((rule) => rule.statement));
-    if (changed && !contract.rules.some((rule) => rule.basis === "analysis" && rule.evidence.length > 0)) {
+    const changed =
+      canonicalJson(contract.rules.map((rule) => rule.statement)) !==
+      canonicalJson(seed.rules.map((rule) => rule.statement));
+    if (
+      changed &&
+      !contract.rules.some(
+        (rule) => rule.basis === "analysis" && rule.evidence.length > 0,
+      )
+    ) {
       problems.push(
         `contracts changes ${contract.concern} from the seeded version without citing an analysis with evidence`,
       );
@@ -110,13 +151,23 @@ function compactAnalysis(record: AnalysisRecord): unknown {
     unitKind: record.unitKind,
     strategy: record.strategy,
     strategyRationale: record.strategyRationale.text,
-    hazards: record.hazards.map((hazard) => `${hazard.id}: ${hazard.description}`),
+    hazards: record.hazards.map(
+      (hazard) => `${hazard.id}: ${hazard.description}`,
+    ),
     uncertainties: record.uncertainties.map((entry) => entry.text),
     blockers: record.blockers.map((entry) => entry.text),
-    sharedState: record.sharedState.map((state) => `${state.name}:${state.access}`),
-    dependencies: record.dependencies.confirmed.map((edge) => `${edge.kind}->${edge.toUnitId}`),
-    unresolved: record.dependencies.unresolved.map((entry) => `${entry.symbol}: ${entry.reason}`),
-    acceptanceScenarios: record.acceptanceScenarios.map((scenario) => `${scenario.id}(${scenario.kind})`),
+    sharedState: record.sharedState.map(
+      (state) => `${state.name}:${state.access}`,
+    ),
+    dependencies: record.dependencies.confirmed.map(
+      (edge) => `${edge.kind}->${edge.toUnitId}`,
+    ),
+    unresolved: record.dependencies.unresolved.map(
+      (entry) => `${entry.symbol}: ${entry.reason}`,
+    ),
+    acceptanceScenarios: record.acceptanceScenarios.map(
+      (scenario) => `${scenario.id}(${scenario.kind})`,
+    ),
   };
 }
 
@@ -145,7 +196,12 @@ function syntheticTask(): TaskRecord {
     inputHash: "reconcile",
     acceptanceCheckIds: [],
     reviewRequired: false,
-    budgets: { maxAttempts: 1, maxModelTokens: null, maxCostUsd: null, timeoutSeconds: 600 },
+    budgets: {
+      maxAttempts: 1,
+      maxModelTokens: null,
+      maxCostUsd: null,
+      timeoutSeconds: 600,
+    },
     blockReason: null,
     publishedRevision: null,
     createdAt: at,
@@ -153,7 +209,10 @@ function syntheticTask(): TaskRecord {
   };
 }
 
-function reconcilerTools(input: ReconcileInput, logger: Logger): {
+function reconcilerTools(
+  input: ReconcileInput,
+  logger: Logger,
+): {
   specs: ReturnType<typeof buildToolSpecs>;
   context: ToolContext;
   resultSchema: z.ZodTypeAny;
@@ -194,7 +253,9 @@ function reconcilerTools(input: ReconcileInput, logger: Logger): {
  * Run the reconciler role over the per-unit analyses and turn its payload into published contracts and a
  * plan. A payload that violates the plan contract is rejected rather than published.
  */
-export async function reconcile(input: ReconcileInput): Promise<ReconcileOutcome> {
+export async function reconcile(
+  input: ReconcileInput,
+): Promise<ReconcileOutcome> {
   const logger = input.logger ?? createLogger({ level: "warn" });
   const unitIds = input.units
     .filter((unit) => unit.analysisRequired)
@@ -217,7 +278,13 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileOutcome
       "Unit analyses:",
       canonicalJson(analyses.map(compactAnalysis)),
       "Seeded contracts (cite the analysis when you change one):",
-      canonicalJson(input.seeds.map((seed) => ({ concern: seed.concern, version: seed.version, rules: seed.rules }))),
+      canonicalJson(
+        input.seeds.map((seed) => ({
+          concern: seed.concern,
+          version: seed.version,
+          rules: seed.rules,
+        })),
+      ),
       `Units requiring a strategy: ${unitIds.join(", ")}`,
     ].join("\n\n"),
     tools: tools.specs,
@@ -235,30 +302,51 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileOutcome
   });
 
   if (result.outcome !== "completed" || result.result === undefined) {
-    throw new DeepError("GM2DEEP-PLAN-UNPRODUCED", `the reconciler did not produce a plan: ${result.outcome}`, {
-      outcome: result.outcome,
-      reason: result.reason ?? null,
-      transcriptPath: result.transcriptPath,
-    });
+    throw new DeepError(
+      "GM2DEEP-PLAN-UNPRODUCED",
+      `the reconciler did not produce a plan: ${result.outcome}`,
+      {
+        outcome: result.outcome,
+        reason: result.reason ?? null,
+        transcriptPath: result.transcriptPath,
+      },
+    );
   }
 
+  const producedBy = provenanceForResult(input.producedBy, result);
   const payload = result.result as ReconcilerPayload;
-  const problems = validateReconcilerPayload(payload, { unitIds, analyses: input.analyses, seeds: input.seeds });
+  const problems = validateReconcilerPayload(payload, {
+    unitIds,
+    analyses: input.analyses,
+    seeds: input.seeds,
+  });
   if (problems.length > 0) {
-    throw new DeepError("GM2DEEP-PLAN-INVALID", "the reconciler payload violates the plan contract", { problems });
+    throw new DeepError(
+      "GM2DEEP-PLAN-INVALID",
+      "the reconciler payload violates the plan contract",
+      { problems },
+    );
   }
 
-  const byConcern = new Map(payload.contracts.map((contract) => [contract.concern, contract]));
+  const byConcern = new Map(
+    payload.contracts.map((contract) => [contract.concern, contract]),
+  );
   const contracts: ContractRecord[] = input.seeds.map((seed) => {
     const replacement = byConcern.get(seed.concern);
-    return replacement === undefined ? seed : { ...seed, version: replacement.version, rules: replacement.rules };
+    return replacement === undefined
+      ? seed
+      : { ...seed, version: replacement.version, rules: replacement.rules };
   });
 
   const plan: PlanRecord = {
     schemaVersion: 1,
     version: input.planVersion,
     createdAt: nowIso(),
-    contracts: contracts.map((contract) => ({ concern: contract.concern, version: contract.version, rules: contract.rules })),
+    contracts: contracts.map((contract) => ({
+      concern: contract.concern,
+      version: contract.version,
+      rules: contract.rules,
+    })),
     unitStrategies: payload.unitStrategies.map((entry) => ({
       unitId: entry.unitId,
       strategy: entry.strategy,
@@ -267,15 +355,19 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileOutcome
     conflictResolutions: payload.conflictResolutions.map((entry) => ({
       concern: entry.concern,
       resolution: entry.resolution,
-      evidence: entry.evidence as PlanRecord["conflictResolutions"][number]["evidence"],
+      evidence:
+        entry.evidence as PlanRecord["conflictResolutions"][number]["evidence"],
     })),
     blockages: payload.blockages.map((entry) => ({ ...entry })),
-    producedBy: input.producedBy,
+    producedBy,
   };
 
   const contractPaths: string[] = [];
   for (const contract of contracts) {
-    const written = writeContract(input.workspace.paths.evidenceContracts, { ...contract, producedBy: input.producedBy });
+    const written = writeContract(input.workspace.paths.evidenceContracts, {
+      ...contract,
+      producedBy,
+    });
     contractPaths.push(written.path);
     input.repo.upsertContract({
       concern: contract.concern,
@@ -286,10 +378,21 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileOutcome
     });
     for (const unitId of unitIds) {
       for (const rule of contract.rules) {
-        input.repo.bindContractRule(contract.concern, contract.version, unitId, rule.id);
+        input.repo.bindContractRule(
+          contract.concern,
+          contract.version,
+          unitId,
+          rule.id,
+        );
       }
     }
   }
   const planWritten = writePlan(input.workspace.paths.evidencePlans, plan);
-  return { plan, contracts, planPath: planWritten.path, contractPaths, problems };
+  return {
+    plan,
+    contracts,
+    planPath: planWritten.path,
+    contractPaths,
+    problems,
+  };
 }

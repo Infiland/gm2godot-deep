@@ -58,7 +58,6 @@ function rowOf(value: Row | undefined, what: string): Row {
   return value;
 }
 
-
 /**
  * The only place raw SQL lives. Everything above this file uses typed accessors so a schema change
  * cannot silently drift from the code that reads it.
@@ -72,19 +71,38 @@ export class Repo {
 
   // ---------------------------------------------------------------- runs
 
-  createRun(id: string, throughPhase: string, execute: boolean, detail: unknown = {}): RunRecord {
+  createRun(
+    id: string,
+    throughPhase: string,
+    execute: boolean,
+    detail: unknown = {},
+  ): RunRecord {
     const at = nowIso();
     this.db
       .prepare(
         `INSERT INTO runs (id, started_at, updated_at, finished_at, through_phase, phase, status, execute, detail_json)
          VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
       )
-      .run(id, at, at, throughPhase, "init", "running", execute ? 1 : 0, JSON.stringify(detail));
+      .run(
+        id,
+        at,
+        at,
+        throughPhase,
+        "init",
+        "running",
+        execute ? 1 : 0,
+        JSON.stringify(detail),
+      );
     return this.getRun(id);
   }
 
   getRun(id: string): RunRecord {
-    const row = rowOf(this.db.prepare("SELECT * FROM runs WHERE id = ?").get(id) as Row | undefined, `run ${id}`);
+    const row = rowOf(
+      this.db.prepare("SELECT * FROM runs WHERE id = ?").get(id) as
+        | Row
+        | undefined,
+      `run ${id}`,
+    );
     return {
       id: str(row["id"], "id"),
       startedAt: str(row["started_at"], "started_at"),
@@ -99,25 +117,39 @@ export class Repo {
   }
 
   latestRun(): RunRecord | null {
-    const row = this.db.prepare("SELECT id FROM runs ORDER BY started_at DESC, id DESC LIMIT 1").get() as Row | undefined;
+    const row = this.db
+      .prepare("SELECT id FROM runs ORDER BY started_at DESC, id DESC LIMIT 1")
+      .get() as Row | undefined;
     return row === undefined ? null : this.getRun(str(row["id"], "id"));
   }
 
   updateRunPhase(id: string, phase: string, detail?: unknown): void {
     if (detail === undefined) {
-      this.db.prepare("UPDATE runs SET phase = ?, updated_at = ? WHERE id = ?").run(phase, nowIso(), id);
+      this.db
+        .prepare("UPDATE runs SET phase = ?, updated_at = ? WHERE id = ?")
+        .run(phase, nowIso(), id);
       return;
     }
     this.db
-      .prepare("UPDATE runs SET phase = ?, updated_at = ?, detail_json = ? WHERE id = ?")
+      .prepare(
+        "UPDATE runs SET phase = ?, updated_at = ?, detail_json = ? WHERE id = ?",
+      )
       .run(phase, nowIso(), JSON.stringify(detail), id);
   }
 
   finishRun(id: string, status: string, detail?: unknown): void {
     const at = nowIso();
     this.db
-      .prepare("UPDATE runs SET status = ?, finished_at = ?, updated_at = ?, detail_json = COALESCE(?, detail_json) WHERE id = ?")
-      .run(status, at, at, detail === undefined ? null : JSON.stringify(detail), id);
+      .prepare(
+        "UPDATE runs SET status = ?, finished_at = ?, updated_at = ?, detail_json = COALESCE(?, detail_json) WHERE id = ?",
+      )
+      .run(
+        status,
+        at,
+        at,
+        detail === undefined ? null : JSON.stringify(detail),
+        id,
+      );
   }
 
   // --------------------------------------------------------------- units
@@ -155,36 +187,51 @@ export class Repo {
   }
 
   getUnit(id: string): UnitRecord | null {
-    const row = this.db.prepare("SELECT * FROM units WHERE id = ?").get(id) as Row | undefined;
+    const row = this.db.prepare("SELECT * FROM units WHERE id = ?").get(id) as
+      | Row
+      | undefined;
     return row === undefined ? null : mapUnit(row);
   }
 
   listUnits(): UnitRecord[] {
-    return (this.db.prepare("SELECT * FROM units ORDER BY id").all() as Row[]).map(mapUnit);
+    return (
+      this.db.prepare("SELECT * FROM units ORDER BY id").all() as Row[]
+    ).map(mapUnit);
   }
 
   setUnitState(id: string, state: TaskState): void {
-    this.db.prepare("UPDATE units SET state = ?, updated_at = ? WHERE id = ?").run(state, nowIso(), id);
+    this.db
+      .prepare("UPDATE units SET state = ?, updated_at = ? WHERE id = ?")
+      .run(state, nowIso(), id);
   }
 
   setUnitStrategy(id: string, strategy: UnitStrategy): void {
-    this.db.prepare("UPDATE units SET strategy = ?, updated_at = ? WHERE id = ?").run(strategy, nowIso(), id);
+    this.db
+      .prepare("UPDATE units SET strategy = ?, updated_at = ? WHERE id = ?")
+      .run(strategy, nowIso(), id);
   }
 
   setUnitRisk(id: string, risk: RiskAssessment): void {
     this.db
-      .prepare("UPDATE units SET risk_level = ?, risk_json = ?, updated_at = ? WHERE id = ?")
+      .prepare(
+        "UPDATE units SET risk_level = ?, risk_json = ?, updated_at = ? WHERE id = ?",
+      )
       .run(risk.level, JSON.stringify(risk), nowIso(), id);
   }
 
   setUnitGroup(id: string, groupId: string | null): void {
-    this.db.prepare("UPDATE units SET group_id = ?, updated_at = ? WHERE id = ?").run(groupId, nowIso(), id);
+    this.db
+      .prepare("UPDATE units SET group_id = ?, updated_at = ? WHERE id = ?")
+      .run(groupId, nowIso(), id);
   }
 
   countUnitsByState(): Record<string, number> {
-    const rows = this.db.prepare("SELECT state, COUNT(*) AS n FROM units GROUP BY state").all() as Row[];
+    const rows = this.db
+      .prepare("SELECT state, COUNT(*) AS n FROM units GROUP BY state")
+      .all() as Row[];
     const counts: Record<string, number> = {};
-    for (const row of rows) counts[str(row["state"], "state")] = num(row["n"], "n");
+    for (const row of rows)
+      counts[str(row["state"], "state")] = num(row["n"], "n");
     return counts;
   }
 
@@ -235,36 +282,55 @@ export class Repo {
   }
 
   getTask(id: string): TaskRecord | null {
-    const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Row | undefined;
+    const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
+      | Row
+      | undefined;
     return row === undefined ? null : mapTask(row);
   }
 
   listTasks(): TaskRecord[] {
-    return (this.db.prepare("SELECT * FROM tasks ORDER BY id").all() as Row[]).map(mapTask);
+    return (
+      this.db.prepare("SELECT * FROM tasks ORDER BY id").all() as Row[]
+    ).map(mapTask);
   }
 
   listTasksInState(state: TaskState): TaskRecord[] {
-    return (this.db.prepare("SELECT * FROM tasks WHERE state = ? ORDER BY id").all(state) as Row[]).map(mapTask);
+    return (
+      this.db
+        .prepare("SELECT * FROM tasks WHERE state = ? ORDER BY id")
+        .all(state) as Row[]
+    ).map(mapTask);
   }
 
   countTasksByState(): Record<string, number> {
-    const rows = this.db.prepare("SELECT state, COUNT(*) AS n FROM tasks GROUP BY state").all() as Row[];
+    const rows = this.db
+      .prepare("SELECT state, COUNT(*) AS n FROM tasks GROUP BY state")
+      .all() as Row[];
     const counts: Record<string, number> = {};
-    for (const row of rows) counts[str(row["state"], "state")] = num(row["n"], "n");
+    for (const row of rows)
+      counts[str(row["state"], "state")] = num(row["n"], "n");
     return counts;
   }
 
   setTaskBlockReason(id: string, reason: string | null): void {
-    this.db.prepare("UPDATE tasks SET block_reason = ?, updated_at = ? WHERE id = ?").run(reason, nowIso(), id);
+    this.db
+      .prepare("UPDATE tasks SET block_reason = ?, updated_at = ? WHERE id = ?")
+      .run(reason, nowIso(), id);
   }
 
   setTaskPublishedRevision(id: string, revision: number): void {
-    this.db.prepare("UPDATE tasks SET published_revision = ?, updated_at = ? WHERE id = ?").run(revision, nowIso(), id);
+    this.db
+      .prepare(
+        "UPDATE tasks SET published_revision = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(revision, nowIso(), id);
   }
 
   setTaskContractVersions(id: string, versions: Record<string, number>): void {
     this.db
-      .prepare("UPDATE tasks SET contract_versions_json = ?, updated_at = ? WHERE id = ?")
+      .prepare(
+        "UPDATE tasks SET contract_versions_json = ?, updated_at = ? WHERE id = ?",
+      )
       .run(JSON.stringify(versions), nowIso(), id);
   }
 
@@ -294,8 +360,19 @@ export class Repo {
       );
   }
 
-  listEvents(taskId: string): { at: string; kind: string; fromState: string | null; toState: string | null; attempt: number | null; detail: unknown }[] {
-    const rows = this.db.prepare("SELECT * FROM task_events WHERE task_id = ? ORDER BY id").all(taskId) as Row[];
+  listEvents(
+    taskId: string,
+  ): {
+    at: string;
+    kind: string;
+    fromState: string | null;
+    toState: string | null;
+    attempt: number | null;
+    detail: unknown;
+  }[] {
+    const rows = this.db
+      .prepare("SELECT * FROM task_events WHERE task_id = ? ORDER BY id")
+      .all(taskId) as Row[];
     return rows.map((row) => ({
       at: str(row["at"], "at"),
       kind: str(row["kind"], "kind"),
@@ -306,7 +383,15 @@ export class Repo {
     }));
   }
 
-  listRecentEvents(limit: number): { taskId: string; at: string; kind: string; fromState: string | null; toState: string | null }[] {
+  listRecentEvents(
+    limit: number,
+  ): {
+    taskId: string;
+    at: string;
+    kind: string;
+    fromState: string | null;
+    toState: string | null;
+  }[] {
     const rows = this.db
       .prepare("SELECT * FROM task_events ORDER BY id DESC LIMIT ?")
       .all(limit) as Row[];
@@ -322,7 +407,11 @@ export class Repo {
   // -------------------------------------------------------------- leases
 
   ensureLeaseRow(taskId: string): void {
-    this.db.prepare("INSERT OR IGNORE INTO leases (task_id, owner, acquired_at, expires_at) VALUES (?, NULL, NULL, NULL)").run(taskId);
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO leases (task_id, owner, acquired_at, expires_at) VALUES (?, NULL, NULL, NULL)",
+      )
+      .run(taskId);
   }
 
   /**
@@ -331,7 +420,9 @@ export class Repo {
    */
   acquireLease(taskId: string, owner: string, ttlSeconds: number): boolean {
     const now = nowIso();
-    const expires = new Date(Date.now() + ttlSeconds * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const expires = new Date(Date.now() + ttlSeconds * 1000)
+      .toISOString()
+      .replace(/\.\d{3}Z$/, "Z");
     const result = this.db
       .prepare(
         `UPDATE leases SET owner = ?, acquired_at = ?, expires_at = ?
@@ -342,19 +433,29 @@ export class Repo {
   }
 
   heartbeatLease(taskId: string, owner: string, ttlSeconds: number): boolean {
-    const expires = new Date(Date.now() + ttlSeconds * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const expires = new Date(Date.now() + ttlSeconds * 1000)
+      .toISOString()
+      .replace(/\.\d{3}Z$/, "Z");
     const result = this.db
-      .prepare("UPDATE leases SET expires_at = ? WHERE task_id = ? AND owner = ?")
+      .prepare(
+        "UPDATE leases SET expires_at = ? WHERE task_id = ? AND owner = ?",
+      )
       .run(expires, taskId, owner);
     return Number(result.changes) > 0;
   }
 
   releaseLease(taskId: string, owner: string): void {
-    this.db.prepare("UPDATE leases SET owner = NULL, acquired_at = NULL, expires_at = NULL WHERE task_id = ? AND owner = ?").run(taskId, owner);
+    this.db
+      .prepare(
+        "UPDATE leases SET owner = NULL, acquired_at = NULL, expires_at = NULL WHERE task_id = ? AND owner = ?",
+      )
+      .run(taskId, owner);
   }
 
   listLeases(): LeaseRecord[] {
-    const rows = this.db.prepare("SELECT * FROM leases ORDER BY task_id").all() as Row[];
+    const rows = this.db
+      .prepare("SELECT * FROM leases ORDER BY task_id")
+      .all() as Row[];
     return rows.map((row) => ({
       taskId: str(row["task_id"], "task_id"),
       owner: optStr(row["owner"]),
@@ -366,7 +467,9 @@ export class Repo {
   /** Tasks whose lease expired before `at`; the scheduler returns them to READY. */
   expiredLeases(at: string): LeaseRecord[] {
     const rows = this.db
-      .prepare("SELECT * FROM leases WHERE owner IS NOT NULL AND expires_at IS NOT NULL AND expires_at < ? ORDER BY task_id")
+      .prepare(
+        "SELECT * FROM leases WHERE owner IS NOT NULL AND expires_at IS NOT NULL AND expires_at < ? ORDER BY task_id",
+      )
       .all(at) as Row[];
     return rows.map((row) => ({
       taskId: str(row["task_id"], "task_id"),
@@ -392,16 +495,29 @@ export class Repo {
         `INSERT INTO patches (id, task_id, attempt, sha256, path, diff_path, base_port_revision, state, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?)`,
       )
-      .run(patch.id, patch.taskId, patch.attempt, patch.sha256, patch.path, patch.diffPath, patch.basePortRevision, nowIso());
+      .run(
+        patch.id,
+        patch.taskId,
+        patch.attempt,
+        patch.sha256,
+        patch.path,
+        patch.diffPath,
+        patch.basePortRevision,
+        nowIso(),
+      );
   }
 
   getPatch(id: string): PatchRecord | null {
-    const row = this.db.prepare("SELECT * FROM patches WHERE id = ?").get(id) as Row | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM patches WHERE id = ?")
+      .get(id) as Row | undefined;
     return row === undefined ? null : mapPatch(row);
   }
 
   findPatch(taskId: string, sha256: string): PatchRecord | null {
-    const row = this.db.prepare("SELECT * FROM patches WHERE task_id = ? AND sha256 = ?").get(taskId, sha256) as Row | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM patches WHERE task_id = ? AND sha256 = ?")
+      .get(taskId, sha256) as Row | undefined;
     return row === undefined ? null : mapPatch(row);
   }
 
@@ -413,7 +529,11 @@ export class Repo {
     const rows = (
       taskId === undefined
         ? this.db.prepare("SELECT * FROM patches ORDER BY created_at, id").all()
-        : this.db.prepare("SELECT * FROM patches WHERE task_id = ? ORDER BY created_at, id").all(taskId)
+        : this.db
+            .prepare(
+              "SELECT * FROM patches WHERE task_id = ? ORDER BY created_at, id",
+            )
+            .all(taskId)
     ) as Row[];
     return rows.map(mapPatch);
   }
@@ -451,38 +571,67 @@ export class Repo {
           JSON.stringify(record.files),
           nowIso(),
         );
-      return this.getIntegrationByKey(record.idempotencyKey) as IntegrationRecord;
+      return this.getIntegrationByKey(
+        record.idempotencyKey,
+      ) as IntegrationRecord;
     });
   }
 
   getIntegrationByKey(key: string): IntegrationRecord | null {
-    const row = this.db.prepare("SELECT * FROM integrations WHERE idempotency_key = ?").get(key) as Row | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM integrations WHERE idempotency_key = ?")
+      .get(key) as Row | undefined;
     return row === undefined ? null : mapIntegration(row);
   }
 
   listIntegrations(): IntegrationRecord[] {
-    return (this.db.prepare("SELECT * FROM integrations ORDER BY created_at, id").all() as Row[]).map(mapIntegration);
+    return (
+      this.db
+        .prepare("SELECT * FROM integrations ORDER BY created_at, id")
+        .all() as Row[]
+    ).map(mapIntegration);
   }
 
   // ------------------------------------------------------- port revisions
 
   currentPortRevision(): number {
-    const row = this.db.prepare("SELECT MAX(revision) AS r FROM port_revisions").get() as Row | undefined;
+    const row = this.db
+      .prepare("SELECT MAX(revision) AS r FROM port_revisions")
+      .get() as Row | undefined;
     return row === undefined ? 0 : (optNum(row["r"]) ?? 0);
   }
 
-  bumpPortRevision(record: { taskId: string | null; integrationId: string | null; files: readonly string[] }): number {
+  bumpPortRevision(record: {
+    taskId: string | null;
+    integrationId: string | null;
+    files: readonly string[];
+  }): number {
     return transact(this.db, () => {
       const next = this.currentPortRevision() + 1;
       this.db
-        .prepare("INSERT INTO port_revisions (revision, created_at, task_id, integration_id, files_json) VALUES (?, ?, ?, ?, ?)")
-        .run(next, nowIso(), record.taskId, record.integrationId, JSON.stringify(record.files));
+        .prepare(
+          "INSERT INTO port_revisions (revision, created_at, task_id, integration_id, files_json) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          next,
+          nowIso(),
+          record.taskId,
+          record.integrationId,
+          JSON.stringify(record.files),
+        );
       return next;
     });
   }
 
-  listPortRevisions(): { revision: number; createdAt: string; taskId: string | null; files: readonly string[] }[] {
-    const rows = this.db.prepare("SELECT * FROM port_revisions ORDER BY revision").all() as Row[];
+  listPortRevisions(): {
+    revision: number;
+    createdAt: string;
+    taskId: string | null;
+    files: readonly string[];
+  }[] {
+    const rows = this.db
+      .prepare("SELECT * FROM port_revisions ORDER BY revision")
+      .all() as Row[];
     return rows.map((row) => ({
       revision: num(row["revision"], "revision"),
       createdAt: str(row["created_at"], "created_at"),
@@ -523,8 +672,16 @@ export class Repo {
       );
   }
 
-  listAnalyses(): { unitId: string; path: string; sha256: string; riskLevel: string | null; strategy: string | null }[] {
-    const rows = this.db.prepare("SELECT * FROM analyses ORDER BY unit_id").all() as Row[];
+  listAnalyses(): {
+    unitId: string;
+    path: string;
+    sha256: string;
+    riskLevel: string | null;
+    strategy: string | null;
+  }[] {
+    const rows = this.db
+      .prepare("SELECT * FROM analyses ORDER BY unit_id")
+      .all() as Row[];
     return rows.map((row) => ({
       unitId: str(row["unit_id"], "unit_id"),
       path: str(row["path"], "path"),
@@ -534,8 +691,18 @@ export class Repo {
     }));
   }
 
-  getAnalysis(unitId: string): { unitId: string; path: string; sha256: string; riskLevel: string | null; strategy: string | null } | null {
-    const row = this.db.prepare("SELECT * FROM analyses WHERE unit_id = ?").get(unitId) as Row | undefined;
+  getAnalysis(
+    unitId: string,
+  ): {
+    unitId: string;
+    path: string;
+    sha256: string;
+    riskLevel: string | null;
+    strategy: string | null;
+  } | null {
+    const row = this.db
+      .prepare("SELECT * FROM analyses WHERE unit_id = ?")
+      .get(unitId) as Row | undefined;
     if (row === undefined) return null;
     return {
       unitId: str(row["unit_id"], "unit_id"),
@@ -562,11 +729,26 @@ export class Repo {
          ON CONFLICT(concern, version) DO UPDATE SET
            path = excluded.path, sha256 = excluded.sha256, policy_json = excluded.policy_json`,
       )
-      .run(record.concern, record.version, record.path, record.sha256, JSON.stringify(record.policy), nowIso());
+      .run(
+        record.concern,
+        record.version,
+        record.path,
+        record.sha256,
+        JSON.stringify(record.policy),
+        nowIso(),
+      );
   }
 
-  listContracts(): { concern: string; version: number; path: string; sha256: string; policy: unknown }[] {
-    const rows = this.db.prepare("SELECT * FROM contracts ORDER BY concern, version").all() as Row[];
+  listContracts(): {
+    concern: string;
+    version: number;
+    path: string;
+    sha256: string;
+    policy: unknown;
+  }[] {
+    const rows = this.db
+      .prepare("SELECT * FROM contracts ORDER BY concern, version")
+      .all() as Row[];
     return rows.map((row) => ({
       concern: str(row["concern"], "concern"),
       version: num(row["version"], "version"),
@@ -577,21 +759,37 @@ export class Repo {
   }
 
   latestContractVersions(): Record<string, number> {
-    const rows = this.db.prepare("SELECT concern, MAX(version) AS v FROM contracts GROUP BY concern").all() as Row[];
+    const rows = this.db
+      .prepare(
+        "SELECT concern, MAX(version) AS v FROM contracts GROUP BY concern",
+      )
+      .all() as Row[];
     const versions: Record<string, number> = {};
-    for (const row of rows) versions[str(row["concern"], "concern")] = num(row["v"], "v");
+    for (const row of rows)
+      versions[str(row["concern"], "concern")] = num(row["v"], "v");
     return versions;
   }
 
-  bindContractRule(concern: string, version: number, unitId: string, ruleId: string): void {
+  bindContractRule(
+    concern: string,
+    version: number,
+    unitId: string,
+    ruleId: string,
+  ): void {
     this.db
-      .prepare("INSERT OR IGNORE INTO contract_bindings (concern, version, unit_id, rule_id) VALUES (?, ?, ?, ?)")
+      .prepare(
+        "INSERT OR IGNORE INTO contract_bindings (concern, version, unit_id, rule_id) VALUES (?, ?, ?, ?)",
+      )
       .run(concern, version, unitId, ruleId);
   }
 
-  listBindingsForUnit(unitId: string): { concern: string; version: number; ruleId: string }[] {
+  listBindingsForUnit(
+    unitId: string,
+  ): { concern: string; version: number; ruleId: string }[] {
     const rows = this.db
-      .prepare("SELECT * FROM contract_bindings WHERE unit_id = ? ORDER BY concern, rule_id")
+      .prepare(
+        "SELECT * FROM contract_bindings WHERE unit_id = ? ORDER BY concern, rule_id",
+      )
       .all(unitId) as Row[];
     return rows.map((row) => ({
       concern: str(row["concern"], "concern"),
@@ -600,9 +798,13 @@ export class Repo {
     }));
   }
 
-  listBindingsForConcern(concern: string): { version: number; unitId: string; ruleId: string }[] {
+  listBindingsForConcern(
+    concern: string,
+  ): { version: number; unitId: string; ruleId: string }[] {
     const rows = this.db
-      .prepare("SELECT * FROM contract_bindings WHERE concern = ? ORDER BY version, unit_id, rule_id")
+      .prepare(
+        "SELECT * FROM contract_bindings WHERE concern = ? ORDER BY version, unit_id, rule_id",
+      )
       .all(concern) as Row[];
     return rows.map((row) => ({
       version: num(row["version"], "version"),
@@ -648,7 +850,7 @@ export class Repo {
         .prepare(
           `SELECT COALESCE(SUM(input_tokens),0) AS i, COALESCE(SUM(output_tokens),0) AS o,
                   COALESCE(SUM(cache_read_tokens),0) AS cr, COALESCE(SUM(cache_write_tokens),0) AS cw,
-                  COALESCE(SUM(cost_usd),0) AS cost, COALESCE(MAX(reported),0) AS rep
+                  COALESCE(SUM(cost_usd),0) AS cost, COALESCE(MIN(reported),0) AS rep
            FROM budget_ledger WHERE run_id = ?`,
         )
         .get(runId) as Row | undefined,
@@ -664,13 +866,31 @@ export class Repo {
     };
   }
 
+  totalsForWorkspace(): UsageTotals {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(input_tokens),0) AS i, COALESCE(SUM(output_tokens),0) AS o,
+      COALESCE(SUM(cache_read_tokens),0) AS cr, COALESCE(SUM(cache_write_tokens),0) AS cw,
+      COALESCE(SUM(cost_usd),0) AS cost, COALESCE(MIN(reported),0) AS rep FROM budget_ledger`,
+      )
+      .get();
+    return {
+      input: Number(row?.["i"] ?? 0),
+      output: Number(row?.["o"] ?? 0),
+      cacheRead: Number(row?.["cr"] ?? 0),
+      cacheWrite: Number(row?.["cw"] ?? 0),
+      costUsd: Number(row?.["cost"] ?? 0),
+      reported: Boolean(row?.["rep"]),
+    };
+  }
+
   totalsForTask(taskId: string): UsageTotals {
     const row = rowOf(
       this.db
         .prepare(
           `SELECT COALESCE(SUM(input_tokens),0) AS i, COALESCE(SUM(output_tokens),0) AS o,
                   COALESCE(SUM(cache_read_tokens),0) AS cr, COALESCE(SUM(cache_write_tokens),0) AS cw,
-                  COALESCE(SUM(cost_usd),0) AS cost, COALESCE(MAX(reported),0) AS rep
+                  COALESCE(SUM(cost_usd),0) AS cost, COALESCE(MIN(reported),0) AS rep
            FROM budget_ledger WHERE task_id = ?`,
         )
         .get(taskId) as Row | undefined,
@@ -688,7 +908,12 @@ export class Repo {
 
   // --------------------------------------------------------- cache table
 
-  putCacheEntry(key: string, unitId: string, kind: string, value: unknown): void {
+  putCacheEntry(
+    key: string,
+    unitId: string,
+    kind: string,
+    value: unknown,
+  ): void {
     this.db
       .prepare(
         `INSERT INTO cache_entries (key, unit_id, kind, value_json, created_at) VALUES (?, ?, ?, ?, ?)
@@ -697,8 +922,12 @@ export class Repo {
       .run(key, unitId, kind, JSON.stringify(value), nowIso());
   }
 
-  getCacheEntry(key: string): { key: string; unitId: string; kind: string; value: unknown } | null {
-    const row = this.db.prepare("SELECT * FROM cache_entries WHERE key = ?").get(key) as Row | undefined;
+  getCacheEntry(
+    key: string,
+  ): { key: string; unitId: string; kind: string; value: unknown } | null {
+    const row = this.db
+      .prepare("SELECT * FROM cache_entries WHERE key = ?")
+      .get(key) as Row | undefined;
     if (row === undefined) return null;
     return {
       key: str(row["key"], "key"),
@@ -709,7 +938,11 @@ export class Repo {
   }
 
   listCacheEntries(): { key: string; unitId: string; kind: string }[] {
-    const rows = this.db.prepare("SELECT key, unit_id, kind FROM cache_entries ORDER BY unit_id, kind").all() as Row[];
+    const rows = this.db
+      .prepare(
+        "SELECT key, unit_id, kind FROM cache_entries ORDER BY unit_id, kind",
+      )
+      .all() as Row[];
     return rows.map((row) => ({
       key: str(row["key"], "key"),
       unitId: str(row["unit_id"], "unit_id"),
@@ -723,7 +956,9 @@ export class Repo {
   }
 
   deleteCacheEntriesForUnit(unitId: string): number {
-    const result = this.db.prepare("DELETE FROM cache_entries WHERE unit_id = ?").run(unitId);
+    const result = this.db
+      .prepare("DELETE FROM cache_entries WHERE unit_id = ?")
+      .run(unitId);
     return Number(result.changes);
   }
 
@@ -764,8 +999,16 @@ export class Repo {
   listValidation(taskId?: string): ValidationRow[] {
     const rows = (
       taskId === undefined
-        ? this.db.prepare("SELECT * FROM validation_results ORDER BY level, check_id").all()
-        : this.db.prepare("SELECT * FROM validation_results WHERE task_id = ? ORDER BY level, check_id").all(taskId)
+        ? this.db
+            .prepare(
+              "SELECT * FROM validation_results ORDER BY level, check_id",
+            )
+            .all()
+        : this.db
+            .prepare(
+              "SELECT * FROM validation_results WHERE task_id = ? ORDER BY level, check_id",
+            )
+            .all(taskId)
     ) as Row[];
     return rows.map(mapValidation);
   }
@@ -785,11 +1028,28 @@ export class Repo {
         `INSERT INTO invalidations (at, kind, concern, from_version, to_version, unit_id, detail_json)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(nowIso(), row.kind, row.concern ?? null, row.fromVersion ?? null, row.toVersion ?? null, row.unitId ?? null, JSON.stringify(row.detail ?? {}));
+      .run(
+        nowIso(),
+        row.kind,
+        row.concern ?? null,
+        row.fromVersion ?? null,
+        row.toVersion ?? null,
+        row.unitId ?? null,
+        JSON.stringify(row.detail ?? {}),
+      );
   }
 
-  listInvalidations(): { kind: string; concern: string | null; fromVersion: number | null; toVersion: number | null; unitId: string | null; detail: unknown }[] {
-    const rows = this.db.prepare("SELECT * FROM invalidations ORDER BY id").all() as Row[];
+  listInvalidations(): {
+    kind: string;
+    concern: string | null;
+    fromVersion: number | null;
+    toVersion: number | null;
+    unitId: string | null;
+    detail: unknown;
+  }[] {
+    const rows = this.db
+      .prepare("SELECT * FROM invalidations ORDER BY id")
+      .all() as Row[];
     return rows.map((row) => ({
       kind: str(row["kind"], "kind"),
       concern: optStr(row["concern"]),
@@ -810,12 +1070,30 @@ export class Repo {
     detail: unknown;
   }): void {
     this.db
-      .prepare("INSERT INTO baseline_attempts (id, at, exit_code, state, fresh, detail_json) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(row.id, nowIso(), row.exitCode, row.state, row.fresh ? 1 : 0, JSON.stringify(row.detail));
+      .prepare(
+        "INSERT INTO baseline_attempts (id, at, exit_code, state, fresh, detail_json) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        row.id,
+        nowIso(),
+        row.exitCode,
+        row.state,
+        row.fresh ? 1 : 0,
+        JSON.stringify(row.detail),
+      );
   }
 
-  listBaselineAttempts(): { id: string; at: string; exitCode: number; state: string; fresh: boolean; detail: unknown }[] {
-    const rows = this.db.prepare("SELECT * FROM baseline_attempts ORDER BY at, id").all() as Row[];
+  listBaselineAttempts(): {
+    id: string;
+    at: string;
+    exitCode: number;
+    state: string;
+    fresh: boolean;
+    detail: unknown;
+  }[] {
+    const rows = this.db
+      .prepare("SELECT * FROM baseline_attempts ORDER BY at, id")
+      .all() as Row[];
     return rows.map((row) => ({
       id: str(row["id"], "id"),
       at: str(row["at"], "at"),
@@ -841,7 +1119,9 @@ function mapUnit(row: Row): UnitRecord {
     riskLevel: optStr(row["risk_level"]) as UnitRecord["riskLevel"],
     risk: parseJson(row["risk_json"]),
     groupId: optStr(row["group_id"]),
-    sourceHashes: (parseJson(row["source_hashes_json"]) as Record<string, string> | null) ?? {},
+    sourceHashes:
+      (parseJson(row["source_hashes_json"]) as Record<string, string> | null) ??
+      {},
     updatedAt: str(row["updated_at"], "updated_at"),
   };
 }
@@ -855,11 +1135,19 @@ function mapTask(row: Row): TaskRecord {
     strategy: str(row["strategy"], "strategy") as UnitStrategy,
     attempt: num(row["attempt"], "attempt"),
     maxAttempts: num(row["max_attempts"], "max_attempts"),
-    allowlist: (parseJson(row["allowlist_json"]) as Allowlist | null) ?? { read: [], write: [] },
+    allowlist: (parseJson(row["allowlist_json"]) as Allowlist | null) ?? {
+      read: [],
+      write: [],
+    },
     dependsOn: (parseJson(row["depends_on_json"]) as string[] | null) ?? [],
-    contractVersions: (parseJson(row["contract_versions_json"]) as Record<string, number> | null) ?? {},
+    contractVersions:
+      (parseJson(row["contract_versions_json"]) as Record<
+        string,
+        number
+      > | null) ?? {},
     inputHash: str(row["input_hash"], "input_hash"),
-    acceptanceCheckIds: (parseJson(row["acceptance_check_ids_json"]) as string[] | null) ?? [],
+    acceptanceCheckIds:
+      (parseJson(row["acceptance_check_ids_json"]) as string[] | null) ?? [],
     reviewRequired: flag(row["review_required"]),
     budgets: (parseJson(row["budgets_json"]) as TaskBudgets | null) ?? {
       maxAttempts: 1,
@@ -919,4 +1207,3 @@ function mapValidation(row: Row): ValidationRow {
     createdAt: str(row["created_at"], "created_at"),
   };
 }
-

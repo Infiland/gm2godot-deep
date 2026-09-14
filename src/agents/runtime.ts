@@ -9,11 +9,20 @@ import type { Logger } from "../util/log.ts";
 export interface ToolContext {
   readonly role: AgentRoleName;
   readonly taskId: string;
-  readonly workspaceRoots: Readonly<Record<"source" | "baseline" | "port" | "task" | "evidence", string>>;
-  readonly allowlist: { readonly read: readonly string[]; readonly write: readonly string[] };
+  readonly workspaceRoots: Readonly<
+    Record<"source" | "baseline" | "port" | "task" | "evidence", string>
+  >;
+  readonly allowlist: {
+    readonly read: readonly string[];
+    readonly write: readonly string[];
+  };
   readonly logger: Logger;
   /** Called when a guard rejects a request, so the denial lands in `task_events`. */
-  readonly recordPolicyDenial: (detail: { tool: string; reason: string; path?: string }) => void;
+  readonly recordPolicyDenial: (detail: {
+    tool: string;
+    reason: string;
+    path?: string;
+  }) => void;
   readonly signal: AbortSignal;
   /** The attempt number, used to name patch artifacts. */
   readonly attempt: number;
@@ -34,7 +43,10 @@ export interface ToolSpec {
   readonly name: string;
   readonly description: string;
   readonly schema: z.ZodTypeAny;
-  readonly execute: (args: unknown, context: ToolContext) => Promise<ToolOutcome>;
+  readonly execute: (
+    args: unknown,
+    context: ToolContext,
+  ) => Promise<ToolOutcome>;
 }
 
 export interface Usage {
@@ -47,7 +59,14 @@ export interface Usage {
   readonly reported: boolean;
 }
 
-export const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0, reported: false };
+export const ZERO_USAGE: Usage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  costUsd: 0,
+  reported: false,
+};
 
 export interface AgentEventRecord {
   readonly seq: number;
@@ -71,7 +90,10 @@ export interface AgentRunRequest {
   readonly resultSchema: z.ZodTypeAny;
   readonly maxTurns: number;
   readonly timeoutSeconds: number;
-  readonly budgets: { readonly tokens: number | null; readonly costUsd: number | null };
+  readonly budgets: {
+    readonly tokens: number | null;
+    readonly costUsd: number | null;
+  };
   readonly signal: AbortSignal;
   /** Host-owned credentials. Never serialized into an artifact, log or subprocess environment. */
   readonly credentials: Readonly<Record<string, string>>;
@@ -80,20 +102,33 @@ export interface AgentRunRequest {
   readonly recordPolicyDenial: ToolContext["recordPolicyDenial"];
 }
 
-export type AgentOutcome = "completed" | "aborted" | "timeout" | "failed" | "budget_exceeded" | "no_result";
+export type AgentOutcome =
+  | "completed"
+  | "aborted"
+  | "timeout"
+  | "failed"
+  | "budget_exceeded"
+  | "no_result";
 
 export interface AgentRunResult {
   readonly outcome: AgentOutcome;
+  readonly provenance?: {
+    readonly runtime: AgentRuntime["id"];
+    readonly provider: string | null;
+    readonly model: string | null;
+  };
   /** Validated against `resultSchema` when `outcome === "completed"`. */
   readonly result?: unknown;
   readonly transcriptPath: string;
   readonly usage: Usage;
+  /** A dispatched call ended before complete usage was reported; retain budget reservation conservatively. */
+  readonly usageUncertain?: boolean;
   readonly events: readonly AgentEventRecord[];
   readonly reason?: string;
 }
 
 export interface AgentRuntime {
-  readonly id: "pi" | "mock";
+  readonly id: "pi" | "mock" | "codex" | "claude" | "opencode";
   /** True when no model was exercised. Never true for the Pi runtime. */
   readonly simulated: boolean;
   run(request: AgentRunRequest): Promise<AgentRunResult>;

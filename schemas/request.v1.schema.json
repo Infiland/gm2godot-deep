@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "protocolVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "capabilities",
+        "research",
+        "convert",
+        "status",
+        "pause",
+        "resume",
+        "cancel"
+      ]
+    },
+    "params": {
+      "default": {},
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "id",
+    "method",
+    "params"
+  ],
+  "additionalProperties": false
+}

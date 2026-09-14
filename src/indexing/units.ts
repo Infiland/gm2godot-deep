@@ -25,7 +25,7 @@ export const UNIT_KINDS = [
 export type UnitKind = (typeof UNIT_KINDS)[number];
 
 /** Unit kinds that are sent to a model. Everything else is deterministic metadata. */
-export const ANALYSIS_UNIT_KINDS: readonly UnitKind[] = ["object", "script", "script_group", "room", "shader", "extension"];
+export const ANALYSIS_UNIT_KINDS: readonly UnitKind[] = UNIT_KINDS;
 
 const KIND_BY_DIRECTORY: Record<string, UnitKind> = {
   objects: "object",
@@ -93,7 +93,9 @@ function unitId(kind: UnitKind, name: string): string {
 }
 
 /** Directory prefix and resource name for a path that lives under a GameMaker resource directory. */
-function resourceLocation(path: string): { directory: string; kind: UnitKind; name: string } | null {
+function resourceLocation(
+  path: string,
+): { directory: string; kind: UnitKind; name: string } | null {
   const segments = path.split("/");
   if (segments.length < 2) return null;
   const kind = KIND_BY_DIRECTORY[segments[0] as string];
@@ -108,7 +110,10 @@ function resourceLocation(path: string): { directory: string; kind: UnitKind; na
  * unit; the coverage check in the validation phase enforces that.
  */
 export function buildUnits(input: UnitBuildInput): AnalysisUnit[] {
-  const byUnitId = new Map<string, { kind: UnitKind; name: string; files: IndexedFile[] }>();
+  const byUnitId = new Map<
+    string,
+    { kind: UnitKind; name: string; files: IndexedFile[] }
+  >();
 
   const add = (kind: UnitKind, name: string, file: IndexedFile): void => {
     const id = unitId(kind, name);
@@ -125,7 +130,7 @@ export function buildUnits(input: UnitBuildInput): AnalysisUnit[] {
       continue;
     }
     // Anything outside a resource directory (`.yyp`, `.resource_order`, `options/**`, stray root files)
-    // belongs to project-level metadata, which is deterministic and never sent to a model.
+    // belongs to project-level metadata, which is researched alongside resource metadata.
     add("project_settings", input.projectName, file);
   }
 
@@ -133,7 +138,8 @@ export function buildUnits(input: UnitBuildInput): AnalysisUnit[] {
   for (const generated of input.generatedFiles) {
     if (generated.sourcePath === null) continue;
     const bucket = generatedBySource.get(generated.sourcePath);
-    if (bucket === undefined) generatedBySource.set(generated.sourcePath, [generated]);
+    if (bucket === undefined)
+      generatedBySource.set(generated.sourcePath, [generated]);
     else bucket.push(generated);
   }
 
@@ -145,7 +151,11 @@ export function buildUnits(input: UnitBuildInput): AnalysisUnit[] {
     for (const file of bucket.files) {
       sourceHashes[file.path] = file.sha256;
       for (const generated of generatedBySource.get(file.path) ?? []) {
-        outputs.push({ path: generated.path, sha256: generated.sha256, sourceMapPath: generated.sourceMapPath });
+        outputs.push({
+          path: generated.path,
+          sha256: generated.sha256,
+          sourceMapPath: generated.sourceMapPath,
+        });
       }
     }
     outputs.sort((a, b) => (a.path < b.path ? -1 : 1));
@@ -167,7 +177,10 @@ export function buildUnits(input: UnitBuildInput): AnalysisUnit[] {
 export function unitKindOf(id: string): UnitKind {
   const kind = id.slice(0, id.indexOf(":")) as UnitKind;
   if (!UNIT_KINDS.includes(kind)) {
-    throw new DeepError("GM2DEEP-UNIT-ID-INVALID", `unit id ${JSON.stringify(id)} does not carry a known kind`);
+    throw new DeepError(
+      "GM2DEEP-UNIT-ID-INVALID",
+      `unit id ${JSON.stringify(id)} does not carry a known kind`,
+    );
   }
   return kind;
 }

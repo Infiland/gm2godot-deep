@@ -1,0 +1,157 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { CodexConnection } from "./external/codex.ts";
+import { runProcess } from "./external/process.ts";
+import { OpenCodeClient } from "./external/opencode.ts";
+export interface ProviderCapability {
+  runtime: string;
+  installed: boolean;
+  authenticated: boolean | null;
+  models: { id: string; name: string; provider?: string }[];
+  reason?: string;
+}
+/** Discovery performs no inference and returns no credentials or raw agent output. */
+export async function discoverAgent(options: {
+  runtime: "codex" | "claude" | "opencode";
+  executable?: string;
+  endpoint?: string;
+  password?: string;
+  signal: AbortSignal;
+}): Promise<ProviderCapability> {
+  options.signal.throwIfAborted();
+  const cwd = mkdtempSync(join(tmpdir(), "gm2deep-discover-"));
+  const executable = options.executable ?? options.runtime;
+  const base = { runtime: options.runtime, installed: true };
+  try {
+    if (options.runtime === "codex") {
+      const client = new CodexConnection(executable, cwd);
+      const abort = (): void => {
+        void client.close();
+      };
+      options.signal.addEventListener("abort", abort, { once: true });
+      try {
+        await client.call("initialize", {
+          clientInfo: { name: "gm2godot-deep", version: "1" },
+        });
+        client.notify("initialized");
+        const account = (await client.call("account/read", {
+          refreshToken: false,
+        })) as { account?: unknown };
+        const listed = (await client.call("model/list", { limit: 100 })) as {
+          data?: { id: string; displayName?: string }[];
+        };
+        return {
+          ...base,
+          authenticated: !!account.account,
+          models: (listed.data ?? []).map((m) => ({
+            id: m.id,
+            name: m.displayName ?? m.id,
+          })),
+        };
+      } finally {
+        options.signal.removeEventListener("abort", abort);
+        await client.close();
+      }
+    }
+    if (options.runtime === "claude") {
+      const status = JSON.parse(
+        await runProcess(
+          executable,
+          ["auth", "status", "--json"],
+          cwd,
+          "",
+          options.signal,
+          [0, 1],
+        ),
+      ) as { loggedIn?: boolean };
+      return {
+        ...base,
+        authenticated: status.loggedIn ?? null,
+        models: [],
+        reason:
+          "Claude Code supports model aliases or an exact model id; its CLI does not expose a model discovery endpoint.",
+      };
+    }
+    const client = new OpenCodeClient({
+      executable,
+      cwd,
+      ...(options.endpoint ? { endpoint: options.endpoint } : {}),
+      ...(options.password ? { password: options.password } : {}),
+    });
+    try {
+      const models = await client.catalog(options.signal);
+      return {
+        ...base,
+        authenticated: null,
+        models: models.map((m) => ({
+          id: m.id,
+          name: m.name,
+          provider: m.provider,
+        })),
+        reason:
+          "Authentication availability is provider-specific; a free synthetic connection check verifies dispatch.",
+      };
+    } finally {
+      await client.close();
+    }
+  } catch {
+    return {
+      runtime: options.runtime,
+      installed: false,
+      authenticated: null,
+      models: [],
+      reason:
+        "Agent discovery failed; check installation, authentication and supported version.",
+    };
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+export async function discoverPi(
+  providerId: string,
+  credentials: Readonly<Record<string, string>>,
+): Promise<ProviderCapability> {
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(providerId))
+    return {
+      runtime: "pi",
+      installed: true,
+      authenticated: false,
+      models: [],
+      reason: "Select a supported API provider",
+    };
+  try {
+    const { createModels } = await import("@earendil-works/pi-ai");
+    const module = (await import(
+      `@earendil-works/pi-ai/providers/${providerId}`
+    )) as Record<string, unknown>;
+    const factory = Object.entries(module).find(
+      ([name, value]) =>
+        name.endsWith("Provider") && typeof value === "function",
+    )?.[1];
+    if (typeof factory !== "function") throw new Error("No provider factory");
+    const provider = factory() as import("@earendil-works/pi-ai").Provider;
+    const models = createModels();
+    models.setProvider(provider);
+    const auth =
+      credentials[providerId] !== undefined ||
+      (await models.getAuth(providerId)) !== undefined;
+    return {
+      runtime: "pi",
+      installed: true,
+      authenticated: auth,
+      models: models
+        .getModels(providerId)
+        .map((m) => ({ id: m.id, name: m.name, provider: providerId })),
+    };
+  } catch {
+    return {
+      runtime: "pi",
+      installed: true,
+      authenticated: false,
+      models: [],
+      reason: "Provider is unavailable or could not resolve credentials",
+    };
+  }
+}

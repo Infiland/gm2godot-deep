@@ -255,13 +255,12 @@ was processed says nothing about whether the port behaves correctly (`src/valida
   state machine depends on (state change + event append atomically). Node prints
   `ExperimentalWarning: SQLite is an experimental feature`; that is documented and not suppressed.
 
-## 8. Why `npm run build` is only a typecheck
+## 8. Compiled extension entry point
 
-`package.json` defines `"build": "npm run typecheck"` and `"typecheck": "tsc --noEmit"`, with
-`noEmit: true` in `tsconfig.json`. Node ≥22.19 strips types when running `.ts` files directly, so a
-separate emitted `dist/` would be a second copy of the code that can drift from what actually runs.
-One source of truth — the `.ts` files — is type-checked and executed; there is no build artifact to
-keep in sync.
+`npm run build` typechecks source and emits JavaScript into `dist/` using `tsconfig.build.json`.
+The release bundle contains this compiled code, pinned Node, locked production dependencies and
+schemas. End users need no TypeScript loader, Node installation or checkout. Development tests can
+still run TypeScript directly with Node 22.19 or newer. The host entry point is `dist/host/main.js`.
 
 ## 9. What evidence validation does not prove
 

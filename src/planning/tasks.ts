@@ -1,10 +1,20 @@
-import type { AnalysisRecord, ContractRecord, ReviewRecord } from "../evidence/schemas.ts";
+import { normalizeRepoPath, isProtected } from "../integration/allowlist.ts";
+import type {
+  AnalysisRecord,
+  ContractRecord,
+  ReviewRecord,
+} from "../evidence/schemas.ts";
 import type { DependencyReport } from "../analysis/edges.ts";
 import type { AnalysisUnit } from "../indexing/units.ts";
 import type { UnitGroup } from "../analysis/cycles.ts";
 import { riskScore, reviewRequired } from "./risk.ts";
 import type { PlanRecord } from "../evidence/schemas.ts";
-import type { Allowlist, RiskAssessment, TaskBudgets, UnitStrategy } from "../storage/types.ts";
+import type {
+  Allowlist,
+  RiskAssessment,
+  TaskBudgets,
+  UnitStrategy,
+} from "../storage/types.ts";
 import { canonicalJson } from "../util/json.ts";
 import { sha256Text } from "../util/sha256.ts";
 
@@ -33,7 +43,11 @@ export interface TaskPlanningInput {
   readonly plan: PlanRecord;
   readonly risks: ReadonlyMap<string, RiskAssessment>;
   readonly policy: {
-    readonly requireReviewFor: readonly ("shared_interface" | "high_risk" | "contract_change")[];
+    readonly requireReviewFor: readonly (
+      | "shared_interface"
+      | "high_risk"
+      | "contract_change"
+    )[];
     readonly maxTaskAttempts: number;
     readonly taskTimeoutSeconds: number;
     readonly perTaskTokens: number | null;
@@ -61,7 +75,8 @@ export function taskInputHash(input: {
   return sha256Text(canonicalJson(input));
 }
 
-const RETAINED_REASON = "generated output is adequate; rewriting it is not justified by any recorded hazard";
+const RETAINED_REASON =
+  "generated output is adequate; rewriting it is not justified by any recorded hazard";
 
 /**
  * One task per unit — or per cycle/shared-output group — for every unit whose strategy is not
@@ -74,7 +89,9 @@ export function planTasks(input: TaskPlanningInput): TaskPlanningResult {
   const retained: { unitId: string; reason: string }[] = [];
   const blocked: { unitId: string; reason: string }[] = [];
 
-  const strategies = new Map(input.plan.unitStrategies.map((entry) => [entry.unitId, entry.strategy]));
+  const strategies = new Map(
+    input.plan.unitStrategies.map((entry) => [entry.unitId, entry.strategy]),
+  );
   const cycleMembership = new Map<string, UnitGroup>();
   for (const group of input.groups) {
     if (group.kind !== "cycle") continue;
@@ -86,21 +103,36 @@ export function planTasks(input: TaskPlanningInput): TaskPlanningResult {
 
   for (const group of input.groups) {
     if (group.kind !== "cycle") continue;
-    const members = group.unitIds.map((id) => byUnit.get(id)).filter((unit): unit is AnalysisUnit => unit !== undefined);
+    const members = group.unitIds
+      .map((id) => byUnit.get(id))
+      .filter((unit): unit is AnalysisUnit => unit !== undefined);
     if (members.length === 0) continue;
     for (const member of members) scheduled.add(member.id);
     scheduledGroups.push({ group, members });
   }
   for (const unit of input.units) {
-    if (!scheduled.has(unit.id)) scheduledGroups.push({ group: { id: unit.id, kind: "shared_output", reason: "single unit", unitIds: [unit.id] }, members: [unit] });
+    if (!scheduled.has(unit.id))
+      scheduledGroups.push({
+        group: {
+          id: unit.id,
+          kind: "shared_output",
+          reason: "single unit",
+          unitIds: [unit.id],
+        },
+        members: [unit],
+      });
   }
 
   for (const { group, members } of scheduledGroups) {
     const groupStrategies = members.map(
-      (member) => strategies.get(member.id) ?? input.analyses.get(member.id)?.strategy ?? "retain_generated",
+      (member) =>
+        strategies.get(member.id) ??
+        input.analyses.get(member.id)?.strategy ??
+        "retain_generated",
     );
     if (groupStrategies.every((strategy) => strategy === "retain_generated")) {
-      for (const member of members) retained.push({ unitId: member.id, reason: RETAINED_REASON });
+      for (const member of members)
+        retained.push({ unitId: member.id, reason: RETAINED_REASON });
       continue;
     }
     const strategy: UnitStrategy = groupStrategies.includes("blocked")
@@ -109,59 +141,124 @@ export function planTasks(input: TaskPlanningInput): TaskPlanningResult {
         ? "replace_component"
         : "repair_generated";
 
-    const write = [...new Set(members.flatMap((member) => member.generatedOutputs.map((output) => output.path)))].sort();
+    const proposed = members.flatMap(
+      (member) => input.analyses.get(member.id)?.plannedOutputs ?? [],
+    );
+    const invalid = proposed.find(
+      (output) =>
+        isProtected(output.path) ||
+        !/\.(gd|tscn|tres|gdshader|json)$/.test(output.path),
+    );
+    if (invalid) {
+      for (const member of members)
+        blocked.push({
+          unitId: member.id,
+          reason: `invalid planned output ${invalid.path}`,
+        });
+      continue;
+    }
+    const write = [
+      ...new Set([
+        ...members.flatMap((member) =>
+          member.generatedOutputs
+            .filter((output) =>
+              /\.(gd|tscn|tres|gdshader|json|godot)$/.test(output.path),
+            )
+            .map((output) => output.path),
+        ),
+        ...proposed.map((output) => normalizeRepoPath(output.path)),
+      ]),
+    ].sort();
+    if (write.length === 0) {
+      const reason =
+        "no generated port output is available for this unit; cannot create a patch task";
+      for (const member of members) blocked.push({ unitId: member.id, reason });
+      continue;
+    }
     const read = [
       ...new Set([
-        ...members.flatMap((member) => member.sourcePaths.map((path) => `source:${path}`)),
-        ...members.flatMap((member) => member.generatedOutputs.map((output) => `baseline:${output.path}`)),
+        ...members.flatMap((member) =>
+          member.sourcePaths.map((path) => `source:${path}`),
+        ),
+        ...members.flatMap((member) =>
+          member.generatedOutputs.flatMap((output) => [
+            `baseline:${output.path}`,
+            `port:${output.path}`,
+          ]),
+        ),
+        ...write.map((path) => `port:${path}`),
         "evidence:contracts",
         "evidence:inventory/inventory.json",
       ]),
     ].sort();
 
     const sourceHashes: Record<string, string> = {};
-    for (const member of members) Object.assign(sourceHashes, member.sourceHashes);
+    for (const member of members)
+      Object.assign(sourceHashes, member.sourceHashes);
 
     const contractVersions = Object.fromEntries(
       input.contracts.map((contract) => [contract.concern, contract.version]),
     );
     const acceptanceCheckIds = members
-      .flatMap((member) => input.analyses.get(member.id)?.acceptanceScenarios.map((scenario) => scenario.id) ?? [])
+      .flatMap(
+        (member) =>
+          input.analyses
+            .get(member.id)
+            ?.acceptanceScenarios.map((scenario) => scenario.id) ?? [],
+      )
       .sort();
     const groupRisk: RiskAssessment = {
-      level: members.some((member) => input.risks.get(member.id)?.level === "high")
+      level: members.some(
+        (member) => input.risks.get(member.id)?.level === "high",
+      )
         ? "high"
-        : members.some((member) => input.risks.get(member.id)?.level === "medium")
+        : members.some(
+              (member) => input.risks.get(member.id)?.level === "medium",
+            )
           ? "medium"
           : "low",
-      reasons: members.flatMap((member) => input.risks.get(member.id)?.reasons ?? []),
+      reasons: members.flatMap(
+        (member) => input.risks.get(member.id)?.reasons ?? [],
+      ),
     };
-    const ownsShared = members.some((member) => isSharedInterface.has(member.id));
+    const ownsShared = members.some((member) =>
+      isSharedInterface.has(member.id),
+    );
     const review = reviewRequired({
       risk: groupRisk,
       ownsSharedInterface: ownsShared,
       contractChanged: false,
       requireReviewFor: input.policy.requireReviewFor,
-      hasUncertainties: members.some((member) => (input.analyses.get(member.id)?.uncertainties.length ?? 0) > 0),
+      hasUncertainties: members.some(
+        (member) =>
+          (input.analyses.get(member.id)?.uncertainties.length ?? 0) > 0,
+      ),
       contradictsDependency: false,
     });
     const dependencies = members.flatMap((member) =>
-      input.dependencies.edges.filter((edge) => edge.from === member.id && edge.confidence === "confirmed"),
+      input.dependencies.edges.filter(
+        (edge) => edge.from === member.id && edge.confidence === "confirmed",
+      ),
     );
     const dependsOnUnits = [
       ...new Set(
         dependencies
-          .filter((edge) => edge.kind !== "shared_state" && edge.to !== edge.from)
+          .filter(
+            (edge) => edge.kind !== "shared_state" && edge.to !== edge.from,
+          )
           .map((edge) => cycleMembership.get(edge.to)?.id ?? edge.to),
       ),
     ].sort();
 
-    const membershipBlockers = members.flatMap((member) => input.analyses.get(member.id)?.blockers ?? []);
+    const membershipBlockers = members.flatMap(
+      (member) => input.analyses.get(member.id)?.blockers ?? [],
+    );
     const blockReason =
       strategy === "blocked"
         ? `analysis blocked this unit: ${membershipBlockers.map((blocker) => blocker.text).join("; ") || "unresolved dynamic semantics"}`
         : null;
-    if (blockReason !== null) blocked.push({ unitId: group.id, reason: blockReason });
+    if (blockReason !== null)
+      blocked.push({ unitId: group.id, reason: blockReason });
 
     tasks.push({
       id: taskIdFor(group.id),
@@ -190,8 +287,34 @@ export function planTasks(input: TaskPlanningInput): TaskPlanningResult {
     });
   }
 
+  const owner = new Map<string, string>();
+  const conflicted = new Set<string>();
+  for (const task of tasks)
+    for (const path of task.allowlist.write) {
+      const previous = owner.get(path);
+      if (previous && previous !== task.id) {
+        conflicted.add(previous);
+        conflicted.add(task.id);
+      }
+      owner.set(path, task.id);
+    }
+  const safeTasks = tasks.map((task) => {
+    if (!conflicted.has(task.id)) return task;
+    const reason =
+      "output ownership conflicts with another task; revise the project plan";
+    for (const unitId of task.unitIds) blocked.push({ unitId, reason });
+    return { ...task, blockReason: reason };
+  });
+  const taskIds = new Set(safeTasks.map((t) => t.id));
   return {
-    tasks: tasks.sort((a, b) => (a.id < b.id ? -1 : 1)),
+    tasks: safeTasks
+      .map((task) => ({
+        ...task,
+        dependsOn: task.dependsOn.filter(
+          (id) => taskIds.has(id) && id !== task.id,
+        ),
+      }))
+      .sort((a, b) => (a.id < b.id ? -1 : 1)),
     retained: retained.sort((a, b) => (a.unitId < b.unitId ? -1 : 1)),
     blocked: blocked.sort((a, b) => (a.unitId < b.unitId ? -1 : 1)),
   };
@@ -202,7 +325,9 @@ export function taskIdFor(unitId: string): string {
 }
 
 /** Units that other units depend on through a non-shared-state edge own an interface. */
-export function sharedInterfaceUnits(dependencies: DependencyReport): Set<string> {
+export function sharedInterfaceUnits(
+  dependencies: DependencyReport,
+): Set<string> {
   const owners = new Set<string>();
   for (const edge of dependencies.edges) {
     if (edge.kind === "shared_state") continue;
@@ -211,4 +336,3 @@ export function sharedInterfaceUnits(dependencies: DependencyReport): Set<string
   }
   return owners;
 }
-

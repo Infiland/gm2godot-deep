@@ -1,0 +1,239 @@
+{
+  "schemaVersion": 1,
+  "gm2godotVersion": "0.7.74",
+  "inventory": {
+    "project": {
+      "name": "Counter",
+      "yypPath": "Counter.yyp",
+      "ideVersion": "2026.0.0.16",
+      "resourceType": "GMProject",
+      "resourceVersion": "2.0"
+    },
+    "resources": [
+      {
+        "name": "obj_counter",
+        "kind": "objects",
+        "typeName": "GMObject",
+        "yypPath": "objects/obj_counter/obj_counter.yy",
+        "sourcePaths": [
+          "objects/obj_counter/Create_0.gml",
+          "objects/obj_counter/Step_0.gml",
+          "objects/obj_counter/obj_counter.yy"
+        ],
+        "godotPath": "res://objects/obj_counter/obj_counter.tscn"
+      },
+      {
+        "name": "obj_counter_child",
+        "kind": "objects",
+        "typeName": "GMObject",
+        "yypPath": "objects/obj_counter_child/obj_counter_child.yy",
+        "sourcePaths": [
+          "objects/obj_counter_child/Create_0.gml",
+          "objects/obj_counter_child/obj_counter_child.yy"
+        ],
+        "godotPath": "res://objects/obj_counter_child/obj_counter_child.tscn"
+      },
+      {
+        "name": "rm_main",
+        "kind": "rooms",
+        "typeName": "GMRoom",
+        "yypPath": "rooms/rm_main/rm_main.yy",
+        "sourcePaths": [
+          "rooms/rm_main/RoomCreationCode.gml",
+          "rooms/rm_main/rm_main.yy"
+        ],
+        "godotPath": "res://rooms/rm_main/rm_main.tscn"
+      },
+      {
+        "name": "scr_math",
+        "kind": "scripts",
+        "typeName": "GMScript",
+        "yypPath": "scripts/scr_math/scr_math.yy",
+        "sourcePaths": [
+          "scripts/scr_math/scr_math.gml",
+          "scripts/scr_math/scr_math.yy"
+        ],
+        "godotPath": null
+      },
+      {
+        "name": "scr_state",
+        "kind": "scripts",
+        "typeName": "GMScript",
+        "yypPath": "scripts/scr_state/scr_state.yy",
+        "sourcePaths": [
+          "scripts/scr_state/scr_state.gml",
+          "scripts/scr_state/scr_state.yy"
+        ],
+        "godotPath": null
+      },
+      {
+        "name": "spr_counter",
+        "kind": "sprites",
+        "typeName": "GMSprite",
+        "yypPath": "sprites/spr_counter/spr_counter.yy",
+        "sourcePaths": [
+          "sprites/spr_counter/8f0a1c6e-3d2b-4f57-9a41-2c7b5e9d0a13.png",
+          "sprites/spr_counter/layers/8f0a1c6e-3d2b-4f57-9a41-2c7b5e9d0a13/b3d9e2a7-5c14-4e88-a6f0-71d4c2b8e5f9.png",
+          "sprites/spr_counter/spr_counter.yy"
+        ],
+        "godotPath": "res://sprites/spr_counter/spr_counter.tscn"
+      }
+    ],
+    "objects": [
+      {
+        "name": "obj_counter",
+        "parentObjectName": null,
+        "persistent": false,
+        "solid": false,
+        "spriteName": "spr_counter",
+        "events": [
+          {
+            "eventType": 0,
+            "eventNum": 0,
+            "file": "Create_0.gml"
+          },
+          {
+            "eventType": 3,
+            "eventNum": 0,
+            "file": "Step_0.gml"
+          }
+        ]
+      },
+      {
+        "name": "obj_counter_child",
+        "parentObjectName": "obj_counter",
+        "persistent": false,
+        "solid": false,
+        "spriteName": "spr_counter",
+        "events": [
+          {
+            "eventType": 0,
+            "eventNum": 0,
+            "file": "Create_0.gml"
+          }
+        ]
+      }
+    ],
+    "rooms": [
+      {
+        "name": "rm_main",
+        "width": 1366,
+        "height": 768,
+        "persistent": false,
+        "parentRoomName": null,
+        "creationCodeFile": "${project_dir}/rooms/rm_main/RoomCreationCode.gml",
+        "ordered": true,
+        "layers": [
+          {
+            "name": "Instances",
+            "resourceType": "GMRInstanceLayer",
+            "depth": 0,
+            "order": 0
+          },
+          {
+            "name": "Background",
+            "resourceType": "GMRBackgroundLayer",
+            "depth": 100,
+            "order": 1
+          }
+        ],
+        "instances": [
+          {
+            "name": "inst_counter_1",
+            "objectName": "obj_counter",
+            "x": 32.0,
+            "y": 32.0
+          }
+        ]
+      }
+    ],
+    "scripts": [
+      {
+        "name": "scr_math",
+        "gmlPath": "scripts/scr_math/scr_math.gml"
+      },
+      {
+        "name": "scr_state",
+        "gmlPath": "scripts/scr_state/scr_state.gml"
+      }
+    ],
+    "sprites": [
+      {
+        "name": "spr_counter",
+        "width": 2,
+        "height": 2,
+        "frameCount": 1
+      }
+    ],
+    "shaders": [],
+    "extensions": [],
+    "diagnostics": []
+  },
+  "gmlApiEntries": [
+    {
+      "name": "asset_get_index",
+      "category": "Asset Management",
+      "status": "implemented",
+      "issueNumber": 484,
+      "ownerModule": "src.conversion.asset_registry",
+      "parserSupport": "n/a",
+      "emitterSupport": "yes",
+      "runtimeSupport": "yes",
+      "smokeCoverage": "no",
+      "docsUrl": "https://manual.gamemaker.io/lts/en/GameMaker_Language/GML_Reference/Asset_Management/Asset_Management.htm",
+      "notes": "Implemented through the generated GMRuntime asset registry."
+    },
+    {
+      "name": "instance_position",
+      "category": "Movement and Collisions",
+      "status": "partial",
+      "issueNumber": 487,
+      "ownerModule": "src.conversion.gml_runtime_parts.segments.45_collision_queries",
+      "parserSupport": "yes",
+      "emitterSupport": "yes",
+      "runtimeSupport": "partial",
+      "smokeCoverage": "yes",
+      "docsUrl": "https://manual.gamemaker.io/lts/en/GameMaker_Language/GML_Reference/Movement_And_Collisions/Movement_And_Collisions.htm",
+      "notes": "Returns matching registered instance handles using the target's active imported mask."
+    },
+    {
+      "name": "string",
+      "category": "Strings",
+      "status": "implemented",
+      "issueNumber": 503,
+      "ownerModule": "src.conversion.gml_runtime_parts.segments.50_static_types_and_clone",
+      "parserSupport": "n/a",
+      "emitterSupport": "yes",
+      "runtimeSupport": "yes",
+      "smokeCoverage": "no",
+      "docsUrl": "https://manual.gamemaker.io/lts/en/GameMaker_Language/GML_Reference/Strings/Strings.htm",
+      "notes": "Basic GML string conversion exists."
+    },
+    {
+      "name": "max",
+      "category": "Maths and Numbers",
+      "status": "implemented",
+      "issueNumber": 504,
+      "ownerModule": "src.conversion.gml_runtime_parts.segments.35_maths_numbers",
+      "parserSupport": "n/a",
+      "emitterSupport": "yes",
+      "runtimeSupport": "yes",
+      "smokeCoverage": "no",
+      "docsUrl": "https://manual.gamemaker.io/lts/en/GameMaker_Language/GML_Reference/Maths_And_Numbers/Maths_And_Numbers.htm",
+      "notes": "Variadic numeric maximum helper."
+    },
+    {
+      "name": "script_execute",
+      "category": "Script Functions",
+      "status": "implemented",
+      "issueNumber": 512,
+      "ownerModule": "src.conversion.gml_runtime_parts.segments.20_methods_and_exceptions",
+      "parserSupport": "n/a",
+      "emitterSupport": "yes",
+      "runtimeSupport": "yes",
+      "smokeCoverage": "partial",
+      "docsUrl": "https://manual.gamemaker.io/lts/en/GameMaker_Language/GML_Overview/Script_Functions.htm",
+      "notes": "Provides method/script call helpers, script registry lookup, script_execute, and scoped legacy argument variables."
+    }
+  ]
+}

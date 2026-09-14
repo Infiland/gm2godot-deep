@@ -63,7 +63,11 @@ export const RESULT_TOOL_NAMES = {
   propose_patch: "propose_patch",
 } as const;
 
-const COMMON_READ_TOOLS = ["read_source", "read_evidence", "list_unit_files"] as const;
+const COMMON_READ_TOOLS = [
+  "read_source",
+  "read_evidence",
+  "list_unit_files",
+] as const;
 
 /**
  * Five fixed role configurations. No role gets a shell, and the only role with a write tool is the
@@ -87,7 +91,12 @@ export const ROLE_CONFIGS: Record<AgentRoleName, RoleConfig> = {
   },
   risk_reviewer: {
     role: "risk_reviewer",
-    toolNames: [...COMMON_READ_TOOLS, "read_generated", "grep_source", RESULT_TOOL_NAMES.submit_review],
+    toolNames: [
+      ...COMMON_READ_TOOLS,
+      "read_generated",
+      "grep_source",
+      RESULT_TOOL_NAMES.submit_review,
+    ],
     resultTool: RESULT_TOOL_NAMES.submit_review,
     maxTurns: 30,
     resultSchema: ReviewerPayloadSchema,
@@ -117,7 +126,12 @@ export const ROLE_CONFIGS: Record<AgentRoleName, RoleConfig> = {
   },
   patch_reviewer: {
     role: "patch_reviewer",
-    toolNames: ["read_source", "read_generated", "read_evidence", RESULT_TOOL_NAMES.submit_review],
+    toolNames: [
+      "read_source",
+      "read_generated",
+      "read_evidence",
+      RESULT_TOOL_NAMES.submit_review,
+    ],
     resultTool: RESULT_TOOL_NAMES.submit_review,
     maxTurns: 30,
     resultSchema: ReviewerPayloadSchema,
@@ -126,7 +140,17 @@ export const ROLE_CONFIGS: Record<AgentRoleName, RoleConfig> = {
 };
 
 export function roleConfig(role: AgentRoleName): RoleConfig {
-  return ROLE_CONFIGS[role];
+  const config = ROLE_CONFIGS[role];
+  return {
+    ...config,
+    toolNames: [
+      ...config.toolNames,
+      "search_documentation",
+      "read_documentation",
+    ],
+  };
 }
 
-export const WRITE_TOOL_NAMES: readonly string[] = [RESULT_TOOL_NAMES.propose_patch];
+export const WRITE_TOOL_NAMES: readonly string[] = [
+  RESULT_TOOL_NAMES.propose_patch,
+];

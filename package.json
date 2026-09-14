@@ -1,6 +1,6 @@
 {
   "name": "gm2godot-deep",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -12,10 +12,11 @@
   "scripts": {
     "deep-convert": "node src/cli/main.ts",
     "typecheck": "tsc --noEmit",
-    "build": "npm run typecheck",
+    "build": "npm run typecheck && tsc -p tsconfig.build.json",
     "test": "node --test \"tests/**/*.test.ts\"",
     "test:integration": "DEEP_INTEGRATION=1 node --test \"tests/integration/**/*.test.ts\"",
-    "demo": "node src/cli/main.ts run --workspace examples/workspace --through report"
+    "demo": "node src/cli/main.ts run --workspace examples/workspace --through report",
+    "host": "node src/host/main.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.85.1",
@@ -25,5 +26,11 @@
   "devDependencies": {
     "@types/node": "22.20.0",
     "typescript": "5.9.3"
-  }
+  },
+  "description": "Optional AI research and conversion engine for GM2Godot",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Infiland/gm2godot-deep.git"
+  },
+  "license": "Apache-2.0"
 }

@@ -1,14 +1,27 @@
 import { Agent } from "@earendil-works/pi-agent-core";
-import { createModels, type Api, type Model, type MutableModels, type Provider } from "@earendil-works/pi-ai";
-import { join } from "node:path";
+import {
+  createModels,
+  type MutableModels,
+  type Provider,
+  type Model,
+  type Api,
+} from "@earendil-works/pi-ai";
 import type { Config } from "../../config/schema.ts";
-import { writeTextAtomic } from "../../util/json.ts";
-import type { Logger } from "../../util/log.ts";
 import { DeepError } from "../../util/result.ts";
+import { writeTextAtomic } from "../../util/json.ts";
 import { redact } from "../events.ts";
+import { join } from "node:path";
+import { encodeId } from "../../evidence/ids.ts";
+import { type Logger } from "../../util/log.ts";
 import { PROMPT_VERSION } from "../prompts.ts";
 import { outcomeFrom, budgetExceeded, type RunLimits } from "../result.ts";
-import type { AgentEventRecord, AgentRunRequest, AgentRunResult, AgentRuntime, Usage } from "../runtime.ts";
+import type {
+  AgentEventRecord,
+  AgentRunRequest,
+  AgentRunResult,
+  AgentRuntime,
+  Usage,
+} from "../runtime.ts";
 import { EventRecorder } from "./events.ts";
 import { buildAgentTools } from "./tools.ts";
 
@@ -29,7 +42,8 @@ const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]*$/i;
 function isProvider(value: unknown): value is Provider {
   if (typeof value !== "object" || value === null) return false;
   if (!("id" in value) || typeof value.id !== "string") return false;
-  if (!("getModels" in value) || typeof value.getModels !== "function") return false;
+  if (!("getModels" in value) || typeof value.getModels !== "function")
+    return false;
   return "stream" in value && typeof value.stream === "function";
 }
 
@@ -39,28 +53,44 @@ function isProvider(value: unknown): value is Provider {
  */
 function providerFrom(created: unknown): Provider | undefined {
   if (isProvider(created)) return created;
-  if (typeof created === "object" && created !== null && "provider" in created && isProvider(created.provider)) {
+  if (
+    typeof created === "object" &&
+    created !== null &&
+    "provider" in created &&
+    isProvider(created.provider)
+  ) {
     return created.provider;
   }
   return undefined;
 }
 
-function providerFactoryIn(module: Record<string, unknown>, providerId: string): () => Provider {
+function providerFactoryIn(
+  module: Record<string, unknown>,
+  providerId: string,
+): () => Provider {
   for (const [name, value] of Object.entries(module)) {
     if (typeof value !== "function" || !name.endsWith("Provider")) continue;
     return () => {
       const provider = providerFrom(value());
       if (provider === undefined) {
-        throw new DeepError("GM2DEEP-PI-MODEL-UNRESOLVED", `provider factory "${name}" did not return a Provider`, {
-          provider: providerId,
-        });
+        throw new DeepError(
+          "GM2DEEP-PI-MODEL-UNRESOLVED",
+          `provider factory "${name}" did not return a Provider`,
+          {
+            provider: providerId,
+          },
+        );
       }
       return provider;
     };
   }
-  throw new DeepError("GM2DEEP-PI-MODEL-UNRESOLVED", `no provider factory found in the "${providerId}" module`, {
-    provider: providerId,
-  });
+  throw new DeepError(
+    "GM2DEEP-PI-MODEL-UNRESOLVED",
+    `no provider factory found in the "${providerId}" module`,
+    {
+      provider: providerId,
+    },
+  );
 }
 
 /**
@@ -68,24 +98,36 @@ function providerFactoryIn(module: Record<string, unknown>, providerId: string):
  * an unimportable subpath or an unknown model id all raise `GM2DEEP-PI-MODEL-UNRESOLVED` listing what was
  * tried — there is no silent fallback to a default model.
  */
-async function resolveModel(config: Config, models: MutableModels, logger: Logger): Promise<Model<Api>> {
+async function resolveModel(
+  config: Config,
+  models: MutableModels,
+  logger: Logger,
+): Promise<Model<Api>> {
   const providerId = config.agent.provider;
   const modelId = config.agent.model;
   const tried: string[] = [];
   if (providerId === null || modelId === null) {
-    throw new DeepError("GM2DEEP-PI-MODEL-UNRESOLVED", "agent.provider and agent.model must both be configured", {
-      provider: providerId,
-      model: modelId,
-      tried,
-    });
+    throw new DeepError(
+      "GM2DEEP-PI-MODEL-UNRESOLVED",
+      "agent.provider and agent.model must both be configured",
+      {
+        provider: providerId,
+        model: modelId,
+        tried,
+      },
+    );
   }
   tried.push(`${providerId}/${modelId}`);
   if (!PROVIDER_ID.test(providerId)) {
-    throw new DeepError("GM2DEEP-PI-MODEL-UNRESOLVED", `provider id "${providerId}" is not a valid module name`, {
-      provider: providerId,
-      model: modelId,
-      tried,
-    });
+    throw new DeepError(
+      "GM2DEEP-PI-MODEL-UNRESOLVED",
+      `provider id "${providerId}" is not a valid module name`,
+      {
+        provider: providerId,
+        model: modelId,
+        tried,
+      },
+    );
   }
   if (models.getProvider(providerId) === undefined) {
     let module: Record<string, unknown>;
@@ -95,12 +137,16 @@ async function resolveModel(config: Config, models: MutableModels, logger: Logge
       module = await import(`@earendil-works/pi-ai/providers/${providerId}`);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      throw new DeepError("GM2DEEP-PI-MODEL-UNRESOLVED", `provider "${providerId}" is not a built-in provider module`, {
-        provider: providerId,
-        model: modelId,
-        tried,
-        cause: detail,
-      });
+      throw new DeepError(
+        "GM2DEEP-PI-MODEL-UNRESOLVED",
+        `provider "${providerId}" is not a built-in provider module`,
+        {
+          provider: providerId,
+          model: modelId,
+          tried,
+          cause: detail,
+        },
+      );
     }
     models.setProvider(providerFactoryIn(module, providerId)());
     logger.info(`pi: registered provider ${providerId}`);
@@ -108,19 +154,26 @@ async function resolveModel(config: Config, models: MutableModels, logger: Logge
   const model = models.getModel(providerId, modelId);
   if (model === undefined) {
     const available = models.getModels(providerId).map((entry) => entry.id);
-    throw new DeepError("GM2DEEP-PI-MODEL-UNRESOLVED", `unknown model "${modelId}" for provider "${providerId}"`, {
-      provider: providerId,
-      model: modelId,
-      tried,
-      available: available.slice(0, 200),
-    });
+    throw new DeepError(
+      "GM2DEEP-PI-MODEL-UNRESOLVED",
+      `unknown model "${modelId}" for provider "${providerId}"`,
+      {
+        provider: providerId,
+        model: modelId,
+        tried,
+        available: available.slice(0, 200),
+      },
+    );
   }
   return model;
 }
 
-function transcriptPathFor(transcriptsDir: string, taskId: string, attempt: number): string {
-  const safe = taskId.replace(/:/g, "%3A").replace(/\//g, "%2F");
-  return join(transcriptsDir, `${safe}.${attempt}.jsonl`);
+function transcriptPathFor(
+  transcriptsDir: string,
+  taskId: string,
+  attempt: number,
+): string {
+  return join(transcriptsDir, `${encodeId(taskId)}.${attempt}.jsonl`);
 }
 
 interface TranscriptTail {
@@ -137,7 +190,11 @@ function writeTranscript(
   events: readonly AgentEventRecord[],
   tail: TranscriptTail,
 ): string {
-  const path = transcriptPathFor(transcriptsDir, request.taskId, request.attempt);
+  const path = transcriptPathFor(
+    transcriptsDir,
+    request.taskId,
+    request.attempt,
+  );
   const header = redact({
     schemaVersion: 1,
     runtime: "pi",
@@ -210,7 +267,10 @@ export function createPiRuntime(deps: PiRuntimeDeps): AgentRuntime {
             maxTurnsReached = true;
             return true;
           }
-          if (recorder !== null && budgetExceeded(recorder.usage(), request.budgets)) {
+          if (
+            recorder !== null &&
+            budgetExceeded(recorder.usage(), request.budgets)
+          ) {
             overBudget = true;
             return true;
           }
@@ -261,7 +321,9 @@ export function createPiRuntime(deps: PiRuntimeDeps): AgentRuntime {
       }
 
       const usage = recording.usage();
-      const captured = recording.hasCaptured() ? recording.captured() : undefined;
+      const captured = recording.hasCaptured()
+        ? recording.captured()
+        : undefined;
       const limits: RunLimits = {
         aborted,
         timedOut,
@@ -299,7 +361,10 @@ export function createPiRuntime(deps: PiRuntimeDeps): AgentRuntime {
           outcome = "failed";
           reason = `result failed schema validation: ${parsed.error.issues
             .slice(0, 20)
-            .map((issue) => `${issue.path.map(String).join(".") || "(root)"}: ${issue.message}`)
+            .map(
+              (issue) =>
+                `${issue.path.map(String).join(".") || "(root)"}: ${issue.message}`,
+            )
             .join("; ")}`;
         } else {
           result = parsed.data;
@@ -313,7 +378,13 @@ export function createPiRuntime(deps: PiRuntimeDeps): AgentRuntime {
         ...(result === undefined ? {} : { result }),
         ...(reason === undefined ? {} : { reason }),
       };
-      const transcriptPath = writeTranscript(deps.transcriptsDir, request, deps.config, events, tail);
+      const transcriptPath = writeTranscript(
+        deps.transcriptsDir,
+        request,
+        deps.config,
+        events,
+        tail,
+      );
       deps.logger.debug(
         `pi run finished: task=${request.taskId} outcome=${outcome} tokens=${usage.input + usage.output} reported=${usage.reported}`,
       );
@@ -322,6 +393,7 @@ export function createPiRuntime(deps: PiRuntimeDeps): AgentRuntime {
         ...(result === undefined ? {} : { result }),
         transcriptPath,
         usage,
+        usageUncertain: !usage.reported,
         events,
         ...(reason === undefined ? {} : { reason }),
       };

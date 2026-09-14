@@ -1,22 +1,31 @@
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { encodeId } from "../evidence/ids.ts";
 import type { PatchRecordPayload } from "../evidence/schemas.ts";
 import { sha256Bytes } from "../util/sha256.ts";
 import { writeTextAtomic } from "../util/json.ts";
-import { DeepError } from "../util/result.ts";
 import { assertContained } from "../workspaces/guards.ts";
 import { normalizeRepoPath } from "./allowlist.ts";
+import { DeepError } from "../util/result.ts";
 
 export type PatchFile = PatchRecordPayload["files"][number];
 
 const BASE_MISMATCH = "GM2DEEP-PATCH-BASE-MISMATCH";
 
-export function patchJsonPath(evidencePatchesDir: string, taskId: string, attempt: number): string {
-  return join(evidencePatchesDir, taskId, `${attempt}.patch.json`);
+export function patchJsonPath(
+  evidencePatchesDir: string,
+  taskId: string,
+  attempt: number,
+): string {
+  return join(evidencePatchesDir, encodeId(taskId), `${attempt}.patch.json`);
 }
 
-export function patchDiffPath(evidencePatchesDir: string, taskId: string, attempt: number): string {
-  return join(evidencePatchesDir, taskId, `${attempt}.patch.diff`);
+export function patchDiffPath(
+  evidencePatchesDir: string,
+  taskId: string,
+  attempt: number,
+): string {
+  return join(evidencePatchesDir, encodeId(taskId), `${attempt}.patch.diff`);
 }
 
 export interface ApplyFileOptions {
@@ -36,7 +45,11 @@ function mismatch(detail: Record<string, unknown>, message: string): DeepError {
  * Apply one recorded file entry inside `root`. The recorded body is authoritative; a `delete` needs no
  * body, so its `contentSha256` is not re-derived (there is nothing left to hash).
  */
-export function applyFileEntry(root: string, file: PatchFile, options: ApplyFileOptions = {}): void {
+export function applyFileEntry(
+  root: string,
+  file: PatchFile,
+  options: ApplyFileOptions = {},
+): void {
   const relative = normalizeRepoPath(file.path);
   const target = assertContained(root, relative);
   const present = existsSync(target) && statSync(target).isFile();
@@ -51,13 +64,19 @@ export function applyFileEntry(root: string, file: PatchFile, options: ApplyFile
     if (present) {
       const current = sha256Bytes(readFileSync(target));
       if (!options.tolerateIdentical || current !== file.contentSha256) {
-        throw mismatch({ path: relative, expected: null, actual: current }, `create of ${relative} but the file exists`);
+        throw mismatch(
+          { path: relative, expected: null, actual: current },
+          `create of ${relative} but the file exists`,
+        );
       }
       return;
     }
   } else {
     if (file.preimageSha256 === null) {
-      throw mismatch({ path: relative, action: file.action }, `${file.action} of ${relative} must declare a preimageSha256`);
+      throw mismatch(
+        { path: relative, action: file.action },
+        `${file.action} of ${relative} must declare a preimageSha256`,
+      );
     }
     if (!present) {
       throw mismatch(
@@ -89,7 +108,10 @@ export function applyFileEntry(root: string, file: PatchFile, options: ApplyFile
 }
 
 /** Apply every recorded file entry to a candidate tree, verifying each pre-image and written hash. */
-export function applyPatchToTree(candidateRoot: string, payload: PatchRecordPayload): void {
+export function applyPatchToTree(
+  candidateRoot: string,
+  payload: PatchRecordPayload,
+): void {
   for (const file of payload.files) applyFileEntry(candidateRoot, file);
 }
 
@@ -110,22 +132,39 @@ function toLines(text: string): string[] {
 }
 
 /** Myers-lite: common prefix/suffix trimmed, the changed middle diffed by LCS (whole replacement when huge). */
-function diffLines(before: readonly string[], after: readonly string[]): DiffOp[] {
+function diffLines(
+  before: readonly string[],
+  after: readonly string[],
+): DiffOp[] {
   let head = 0;
-  while (head < before.length && head < after.length && before[head] === after[head]) head++;
+  while (
+    head < before.length &&
+    head < after.length &&
+    before[head] === after[head]
+  )
+    head++;
   let endBefore = before.length;
   let endAfter = after.length;
-  while (endBefore > head && endAfter > head && before[endBefore - 1] === after[endAfter - 1]) {
+  while (
+    endBefore > head &&
+    endAfter > head &&
+    before[endBefore - 1] === after[endAfter - 1]
+  ) {
     endBefore--;
     endAfter--;
   }
 
   const ops: DiffOp[] = [];
-  for (let i = 0; i < head; i++) ops.push({ kind: "context", line: before[i]! });
+  for (let i = 0; i < head; i++)
+    ops.push({ kind: "context", line: before[i]! });
   const midBefore = before.slice(head, endBefore);
   const midAfter = after.slice(head, endAfter);
 
-  if (midBefore.length === 0 || midAfter.length === 0 || midBefore.length * midAfter.length > 1_000_000) {
+  if (
+    midBefore.length === 0 ||
+    midAfter.length === 0 ||
+    midBefore.length * midAfter.length > 1_000_000
+  ) {
     for (const line of midBefore) ops.push({ kind: "remove", line });
     for (const line of midAfter) ops.push({ kind: "add", line });
   } else {
@@ -137,7 +176,10 @@ function diffLines(before: readonly string[], after: readonly string[]): DiffOp[
         lcs[i * (columns + 1) + j] =
           midBefore[i] === midAfter[j]
             ? lcs[(i + 1) * (columns + 1) + (j + 1)]! + 1
-            : Math.max(lcs[(i + 1) * (columns + 1) + j]!, lcs[i * (columns + 1) + (j + 1)]!);
+            : Math.max(
+                lcs[(i + 1) * (columns + 1) + j]!,
+                lcs[i * (columns + 1) + (j + 1)]!,
+              );
       }
     }
     let i = 0;
@@ -147,7 +189,9 @@ function diffLines(before: readonly string[], after: readonly string[]): DiffOp[
         ops.push({ kind: "context", line: midBefore[i]! });
         i++;
         j++;
-      } else if (lcs[(i + 1) * (columns + 1) + j]! >= lcs[i * (columns + 1) + (j + 1)]!) {
+      } else if (
+        lcs[(i + 1) * (columns + 1) + j]! >= lcs[i * (columns + 1) + (j + 1)]!
+      ) {
         ops.push({ kind: "remove", line: midBefore[i]! });
         i++;
       } else {
@@ -159,7 +203,8 @@ function diffLines(before: readonly string[], after: readonly string[]): DiffOp[
     while (j < columns) ops.push({ kind: "add", line: midAfter[j++]! });
   }
 
-  for (let i = endBefore; i < before.length; i++) ops.push({ kind: "context", line: before[i]! });
+  for (let i = endBefore; i < before.length; i++)
+    ops.push({ kind: "context", line: before[i]! });
   return ops;
 }
 
@@ -206,9 +251,12 @@ function renderHunks(ops: readonly DiffOp[], context = 3): string[] {
     const slice = ops.slice(from, to + 1);
     const oldCount = slice.filter((op) => op.kind !== "add").length;
     const newCount = slice.filter((op) => op.kind !== "remove").length;
-    hunks.push(`@@ -${hunkRange(oldLineAt[from]!, oldCount)} +${hunkRange(newLineAt[from]!, newCount)} @@`);
+    hunks.push(
+      `@@ -${hunkRange(oldLineAt[from]!, oldCount)} +${hunkRange(newLineAt[from]!, newCount)} @@`,
+    );
     for (const op of slice) {
-      const prefix = op.kind === "context" ? " " : op.kind === "remove" ? "-" : "+";
+      const prefix =
+        op.kind === "context" ? " " : op.kind === "remove" ? "-" : "+";
       hunks.push(`${prefix}${op.line}`);
     }
   }
@@ -224,12 +272,17 @@ export interface DiffOptions {
 }
 
 /** Read the pre-image bodies a patch declares, from the tree it is based on. */
-export function preimagesForRoot(root: string, payload: PatchRecordPayload): Record<string, string> {
+export function preimagesForRoot(
+  root: string,
+  payload: PatchRecordPayload,
+): Record<string, string> {
   const preimages: Record<string, string> = {};
   for (const file of payload.files) {
     if (file.action === "create") continue;
     const target = assertContained(root, normalizeRepoPath(file.path));
-    preimages[normalizeRepoPath(file.path)] = existsSync(target) ? readFileSync(target, "utf8") : "";
+    preimages[normalizeRepoPath(file.path)] = existsSync(target)
+      ? readFileSync(target, "utf8")
+      : "";
   }
   return preimages;
 }
@@ -240,11 +293,15 @@ export function preimagesForRoot(root: string, payload: PatchRecordPayload): Rec
  * parsed back into a patch. A missing pre-image for an `update`/`delete` is a hard error rather than a
  * fabricated "empty old file" diff.
  */
-export function renderUnifiedDiff(payload: PatchRecordPayload, options: DiffOptions = {}): string {
+export function renderUnifiedDiff(
+  payload: PatchRecordPayload,
+  options: DiffOptions = {},
+): string {
   const sections: string[] = [];
   for (const file of payload.files) {
     const relative = normalizeRepoPath(file.path);
-    const preimageText = file.action === "create" ? "" : options.preimages?.[relative];
+    const preimageText =
+      file.action === "create" ? "" : options.preimages?.[relative];
     if (file.action !== "create" && preimageText === undefined) {
       throw new DeepError(
         "GM2DEEP-PATCH-PREIMAGE-MISSING",
@@ -258,7 +315,9 @@ export function renderUnifiedDiff(payload: PatchRecordPayload, options: DiffOpti
       `--- ${file.action === "create" ? "/dev/null" : `a/${relative}`}`,
       `+++ ${file.action === "delete" ? "/dev/null" : `b/${relative}`}`,
     ];
-    sections.push(`${[...header, ...renderHunks(diffLines(before, after))].join("\n")}\n`);
+    sections.push(
+      `${[...header, ...renderHunks(diffLines(before, after))].join("\n")}\n`,
+    );
   }
   return sections.join("");
 }

@@ -1,17 +1,32 @@
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { z } from "zod";
 import { canonicalJson, readJsonFile, writeJsonAtomic } from "../util/json.ts";
-import { sha256Text } from "../util/sha256.ts";
+import { sha256Bytes, sha256Text } from "../util/sha256.ts";
 import { nowIso } from "../util/ids.ts";
 import { DeepError } from "../util/result.ts";
 import { exclusionFor } from "./exclude.ts";
 import { classifyPath, type FileClassification } from "./classify.ts";
 import { hashFileEntry } from "./hash.ts";
-import { buildUnits, UNIT_KINDS, type AnalysisUnit, type GeneratedFileLink, type IndexedFile } from "./units.ts";
+import {
+  buildUnits,
+  UNIT_KINDS,
+  type AnalysisUnit,
+  type GeneratedFileLink,
+  type IndexedFile,
+} from "./units.ts";
 import { listManagedOutputs } from "../adapters/gm2godot/manifest.ts";
-import { BridgeInventorySchema, GmlApiEntrySchema, type BridgeInventory, type GmlApiEntry, type Gm2GodotProbe } from "../adapters/gm2godot/bridge.ts";
-import { SnapshotRecordSchema, type SnapshotRecord } from "../workspaces/snapshot.ts";
+import {
+  BridgeInventorySchema,
+  GmlApiEntrySchema,
+  type BridgeInventory,
+  type GmlApiEntry,
+  type Gm2GodotProbe,
+} from "../adapters/gm2godot/bridge.ts";
+import {
+  SnapshotRecordSchema,
+  type SnapshotRecord,
+} from "../workspaces/snapshot.ts";
 import { packageVersion } from "../util/package.ts";
 
 export const INVENTORY_SCHEMA_VERSION = 1;
@@ -24,7 +39,14 @@ export const IndexedFileSchema = z.strictObject({
   path: z.string().min(1),
   sha256: z.string(),
   bytes: z.number().int().nonnegative(),
-  classification: z.enum(["code", "resource_metadata", "binary_asset", "configuration", "included_data", "excluded"]),
+  classification: z.enum([
+    "code",
+    "resource_metadata",
+    "binary_asset",
+    "configuration",
+    "included_data",
+    "excluded",
+  ]),
   classificationReason: z.string().min(1),
   resourceType: z.string().min(1).nullable(),
   resourceName: z.string().min(1).nullable(),
@@ -37,7 +59,11 @@ export const AnalysisUnitSchema = z.strictObject({
   sourcePaths: z.array(z.string().min(1)),
   sourceHashes: z.record(z.string(), z.string()),
   generatedOutputs: z.array(
-    z.strictObject({ path: z.string().min(1), sha256: z.string(), sourceMapPath: z.string().min(1).nullable() }),
+    z.strictObject({
+      path: z.string().min(1),
+      sha256: z.string(),
+      sourceMapPath: z.string().min(1).nullable(),
+    }),
   ),
   analysisRequired: z.boolean(),
   memberUnitIds: z.array(z.string().min(1)).optional(),
@@ -52,7 +78,10 @@ export const InventoryRecordSchema = z.strictObject({
     gm2godotDeepVersion: z.string().min(1),
     node: z.string().min(1),
     python: z.string().min(1).nullable(),
-    gm2godot: z.strictObject({ version: z.string().min(1), commit: z.string().nullable() }),
+    gm2godot: z.strictObject({
+      version: z.string().min(1),
+      commit: z.string().nullable(),
+    }),
   }),
   files: z.array(IndexedFileSchema),
   resources: z.array(z.unknown()),
@@ -81,7 +110,9 @@ export type InventoryCounts = InventoryRecord["counts"];
 function walkSnapshot(root: string): { absolute: string; relative: string }[] {
   const found: { absolute: string; relative: string }[] = [];
   const walk = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort(
+      (a, b) => (a.name < b.name ? -1 : 1),
+    )) {
       const absolute = join(directory, entry.name);
       const posix = relative(root, absolute).split(sep).join("/");
       if (entry.isDirectory()) {
@@ -106,9 +137,23 @@ function walkSnapshot(root: string): { absolute: string; relative: string }[] {
  * `entries[].source_path` are therefore normalized by matching their suffix against the project's real source
  * files, which is the only form that survives conversion from a staging copy.
  */
-function generatedFileLinks(baselineDir: string, knownSourcePaths: readonly string[]): GeneratedFileLink[] {
-  const managed = listManagedOutputs(baselineDir);
-  const mapPaths = new Set(managed.filter((entry) => entry.path.endsWith(".gmlmap.json")).map((entry) => entry.path));
+function generatedFileLinks(
+  baselineDir: string,
+  knownSourcePaths: readonly string[],
+): GeneratedFileLink[] {
+  const managed = existsSync(
+    join(baselineDir, "gm2godot/conversion_manifest.json"),
+  )
+    ? listManagedOutputs(baselineDir)
+    : walkSnapshot(baselineDir).map((file) => ({
+        path: file.relative,
+        sha256: sha256Bytes(readFileSync(file.absolute)),
+      }));
+  const mapPaths = new Set(
+    managed
+      .filter((entry) => entry.path.endsWith(".gmlmap.json"))
+      .map((entry) => entry.path),
+  );
   const known = [...knownSourcePaths].sort((a, b) => b.length - a.length);
 
   const normalize = (candidate: unknown): string | null => {
@@ -133,7 +178,12 @@ function generatedFileLinks(baselineDir: string, knownSourcePaths: readonly stri
         if ("source_path" in record) candidates.push(record.source_path);
         if ("entries" in record && Array.isArray(record.entries)) {
           for (const item of record.entries) {
-            if (typeof item === "object" && item !== null && "source_path" in item) candidates.push(item.source_path);
+            if (
+              typeof item === "object" &&
+              item !== null &&
+              "source_path" in item
+            )
+              candidates.push(item.source_path);
           }
         }
         for (const candidate of candidates) {
@@ -144,6 +194,21 @@ function generatedFileLinks(baselineDir: string, knownSourcePaths: readonly stri
           }
         }
       }
+    }
+    if (sourcePath === null) {
+      const outputSegments = entry.path.split("/");
+      const candidates = known.filter((path) => {
+        const segments = path.split("/");
+        return (
+          segments.length >= 2 &&
+          outputSegments[0] === segments[0] &&
+          outputSegments.includes(segments[1] ?? "")
+        );
+      });
+      const roots = new Set(
+        candidates.map((path) => path.split("/").slice(0, 2).join("/")),
+      );
+      if (roots.size === 1) sourcePath = candidates[0] ?? null;
     }
     links.push({
       path: entry.path,
@@ -159,6 +224,7 @@ export interface InventoryBuildRequest {
   readonly snapshot: SnapshotRecord;
   readonly snapshotDir: string;
   readonly baselineDir: string | null;
+  readonly baselineId?: string | null;
   readonly bridge: BridgeInventory;
   readonly probe: Gm2GodotProbe;
   readonly gmlApiEntries: readonly GmlApiEntry[];
@@ -171,7 +237,9 @@ export interface InventoryBuildRequest {
  * Assemble the file/resource/unit inventory, persist it, and persist the GML API manifest it was built
  * against so the analysis records can cite the exact upstream support table.
  */
-export async function buildInventory(request: InventoryBuildRequest): Promise<InventoryRecord> {
+export async function buildInventory(
+  request: InventoryBuildRequest,
+): Promise<InventoryRecord> {
   const walked = walkSnapshot(request.snapshotDir);
   const files: IndexedFile[] = [];
   for (const entry of walked) {
@@ -206,30 +274,42 @@ export async function buildInventory(request: InventoryBuildRequest): Promise<In
       ? []
       : generatedFileLinks(
           request.baselineDir,
-          files.filter((file) => file.classification !== "excluded").map((file) => file.path),
+          files
+            .filter((file) => file.classification !== "excluded")
+            .map((file) => file.path),
         );
-  const units = buildUnits({ projectName: request.bridge.project.name, files, generatedFiles });
+  const units = buildUnits({
+    projectName: request.bridge.project.name,
+    files,
+    generatedFiles,
+  });
 
   const byClassification: Record<string, number> = {};
   for (const file of files) {
-    byClassification[file.classification] = (byClassification[file.classification] ?? 0) + 1;
+    byClassification[file.classification] =
+      (byClassification[file.classification] ?? 0) + 1;
   }
   const byUnitKind: Record<string, number> = {};
-  for (const unit of units) byUnitKind[unit.kind] = (byUnitKind[unit.kind] ?? 0) + 1;
+  for (const unit of units)
+    byUnitKind[unit.kind] = (byUnitKind[unit.kind] ?? 0) + 1;
 
   const byStatus: Record<string, number> = {};
-  for (const entry of request.gmlApiEntries) byStatus[entry.status] = (byStatus[entry.status] ?? 0) + 1;
+  for (const entry of request.gmlApiEntries)
+    byStatus[entry.status] = (byStatus[entry.status] ?? 0) + 1;
 
   const record: InventoryRecord = {
     schemaVersion: INVENTORY_SCHEMA_VERSION,
     sourceSnapshotId: request.snapshot.snapshotId,
-    baselineId: null,
+    baselineId: request.baselineId ?? null,
     createdAt: (request.now ?? nowIso)(),
     tool: {
       gm2godotDeepVersion: packageVersion(),
       node: process.version,
       python: request.probe.pythonVersion,
-      gm2godot: { version: request.probe.gm2godotVersion, commit: request.probe.commit },
+      gm2godot: {
+        version: request.probe.gm2godotVersion,
+        commit: request.probe.commit,
+      },
     },
     files,
     resources: request.bridge.resources,
@@ -238,12 +318,15 @@ export async function buildInventory(request: InventoryBuildRequest): Promise<In
     units,
     counts: {
       total: files.length,
-      excluded: files.filter((file) => file.classification === "excluded").length,
+      excluded: files.filter((file) => file.classification === "excluded")
+        .length,
       byClassification,
       byUnitKind,
       unitsTotal: units.length,
-      unitsRequiringAnalysis: units.filter((unit) => unit.analysisRequired).length,
-      unitsDeterministicOnly: units.filter((unit) => !unit.analysisRequired).length,
+      unitsRequiringAnalysis: units.filter((unit) => unit.analysisRequired)
+        .length,
+      unitsDeterministicOnly: units.filter((unit) => !unit.analysisRequired)
+        .length,
     },
     gmlApi: {
       entryCount: request.gmlApiEntries.length,
@@ -257,43 +340,79 @@ export async function buildInventory(request: InventoryBuildRequest): Promise<In
     digest: record.gmlApi.digest,
     entries: request.gmlApiEntries,
   });
-  writeJsonAtomic(join(request.evidenceInventoryDir, BRIDGE_FILENAME), request.bridge);
-  writeJsonAtomic(join(request.evidenceInventoryDir, INVENTORY_FILENAME), record);
+  writeJsonAtomic(
+    join(request.evidenceInventoryDir, BRIDGE_FILENAME),
+    request.bridge,
+  );
+  writeJsonAtomic(
+    join(request.evidenceInventoryDir, INVENTORY_FILENAME),
+    record,
+  );
   return record;
 }
 
-export function readBridgeInventory(evidenceInventoryDir: string): BridgeInventory {
-  return BridgeInventorySchema.parse(readJsonFile(join(evidenceInventoryDir, BRIDGE_FILENAME)));
+export function readBridgeInventory(
+  evidenceInventoryDir: string,
+): BridgeInventory {
+  return BridgeInventorySchema.parse(
+    readJsonFile(join(evidenceInventoryDir, BRIDGE_FILENAME)),
+  );
 }
 
 export function readGmlApiEntries(evidenceInventoryDir: string): GmlApiEntry[] {
-  const payload: unknown = readJsonFile(join(evidenceInventoryDir, GML_API_FILENAME));
-  if (typeof payload !== "object" || payload === null || !("entries" in payload)) {
-    throw new DeepError("GM2DEEP-EVIDENCE-MALFORMED", "gml-api.json has no entries array", {
-      path: join(evidenceInventoryDir, GML_API_FILENAME),
-    });
+  const payload: unknown = readJsonFile(
+    join(evidenceInventoryDir, GML_API_FILENAME),
+  );
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    !("entries" in payload)
+  ) {
+    throw new DeepError(
+      "GM2DEEP-EVIDENCE-MALFORMED",
+      "gml-api.json has no entries array",
+      {
+        path: join(evidenceInventoryDir, GML_API_FILENAME),
+      },
+    );
   }
   return z.array(GmlApiEntrySchema).parse(payload.entries);
 }
 
-export function readSnapshotRecord(evidenceInventoryDir: string): SnapshotRecord {
-  return SnapshotRecordSchema.parse(readJsonFile(join(evidenceInventoryDir, SNAPSHOT_FILENAME)));
+export function readSnapshotRecord(
+  evidenceInventoryDir: string,
+): SnapshotRecord {
+  return SnapshotRecordSchema.parse(
+    readJsonFile(join(evidenceInventoryDir, SNAPSHOT_FILENAME)),
+  );
 }
 
 export function readInventory(evidenceInventoryDir: string): InventoryRecord {
-  return InventoryRecordSchema.parse(readJsonFile(join(evidenceInventoryDir, INVENTORY_FILENAME)));
+  return InventoryRecordSchema.parse(
+    readJsonFile(join(evidenceInventoryDir, INVENTORY_FILENAME)),
+  );
 }
 
-export function classificationOf(inventory: InventoryRecord, path: string): FileClassification | null {
+export function classificationOf(
+  inventory: InventoryRecord,
+  path: string,
+): FileClassification | null {
   const file = inventory.files.find((candidate) => candidate.path === path);
   return file?.classification ?? null;
 }
 
-export function unitById(inventory: InventoryRecord, id: string): AnalysisUnit | null {
+export function unitById(
+  inventory: InventoryRecord,
+  id: string,
+): AnalysisUnit | null {
   return inventory.units.find((unit) => unit.id === id) ?? null;
 }
 
-export function inventoryHasFile(inventory: InventoryRecord, path: string, sha256?: string): boolean {
+export function inventoryHasFile(
+  inventory: InventoryRecord,
+  path: string,
+  sha256?: string,
+): boolean {
   const file = inventory.files.find((candidate) => candidate.path === path);
   if (file === undefined) return false;
   return sha256 === undefined || file.sha256 === sha256;

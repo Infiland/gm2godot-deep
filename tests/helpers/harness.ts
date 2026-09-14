@@ -20,26 +20,58 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ConfigSchema, type Config, type AgentRuntimeId } from "../../src/config/schema.ts";
+import {
+  ConfigSchema,
+  type Config,
+  type AgentRuntimeId,
+} from "../../src/config/schema.ts";
 import { openDatabase, type Database } from "../../src/storage/db.ts";
 import { Repo } from "../../src/storage/repo.ts";
-import { createWorkspace, type Workspace } from "../../src/workspaces/workspace.ts";
+import {
+  createWorkspace,
+  type Workspace,
+} from "../../src/workspaces/workspace.ts";
 import { thawTree } from "../../src/workspaces/snapshot.ts";
-import { InventoryRecordSchema, type InventoryRecord } from "../../src/indexing/inventory.ts";
-import type { Allowlist, TaskBudgets, TaskRecord, TaskState, UnitStrategy } from "../../src/storage/types.ts";
+import {
+  InventoryRecordSchema,
+  type InventoryRecord,
+} from "../../src/indexing/inventory.ts";
+import type {
+  Allowlist,
+  TaskBudgets,
+  TaskRecord,
+  TaskState,
+  UnitStrategy,
+} from "../../src/storage/types.ts";
 
 /** Absolute repository root, derived from this file's location (`tests/helpers/harness.ts`). */
 export function repoRoot(): string {
-  return realpathSync(join(dirname(fileURLToPath(import.meta.url)), "..", ".."));
+  return realpathSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", ".."),
+  );
 }
 
-export const FIXTURE_PROJECT = join(repoRoot(), "fixtures", "gm-projects", "counter");
-export const FIXTURE_SCENARIO = join(repoRoot(), "fixtures", "scenarios", "counter_trace.gd");
-export const FIXTURE_EXPECTED_TRACE = join(repoRoot(), "fixtures", "traces", "counter_expected.json");
-export const GM2GODOT_CHECKOUT = process.env["GM2GODOT_CHECKOUT"] ?? "/Users/infi/Documents/Github/GM2Godot";
-export const GM2GODOT_PYTHON =
-  process.env["GM2GODOT_PYTHON"] ?? "/Users/infi/Documents/Github/.gm2godot-campaign-venv/bin/python";
-export const GODOT_BINARY = process.env["GODOT_BIN"] ?? "/Applications/Godot.app/Contents/MacOS/Godot";
+export const FIXTURE_PROJECT = join(
+  repoRoot(),
+  "fixtures",
+  "gm-projects",
+  "counter",
+);
+export const FIXTURE_SCENARIO = join(
+  repoRoot(),
+  "fixtures",
+  "scenarios",
+  "counter_trace.gd",
+);
+export const FIXTURE_EXPECTED_TRACE = join(
+  repoRoot(),
+  "fixtures",
+  "traces",
+  "counter_expected.json",
+);
+export const GM2GODOT_CHECKOUT = process.env["GM2GODOT_CHECKOUT"] ?? "";
+export const GM2GODOT_PYTHON = process.env["GM2GODOT_PYTHON"] ?? "";
+export const GODOT_BINARY = process.env["GODOT_BIN"] ?? "";
 
 /** A fresh temp directory whose *real* path is returned (the parent `/tmp` is a symlink on macOS). */
 export function makeTempDir(label: string): string {
@@ -84,7 +116,11 @@ const FIXTURE_YYP = JSON.stringify(
 export function writeTinyGmProject(directory: string): string {
   mkdirSync(join(directory, "scripts", "scr_tiny"), { recursive: true });
   writeFileSync(join(directory, "Tiny.yyp"), FIXTURE_YYP, "utf8");
-  writeFileSync(join(directory, "scripts", "scr_tiny", "scr_tiny.gml"), "function scr_tiny() { return 1; }\n", "utf8");
+  writeFileSync(
+    join(directory, "scripts", "scr_tiny", "scr_tiny.gml"),
+    "function scr_tiny() { return 1; }\n",
+    "utf8",
+  );
   return directory;
 }
 
@@ -125,9 +161,14 @@ export function sampleConfig(input: {
 }
 
 /** Create a workspace (layout + `.sqlite`) and an open `Repo` on it. */
-export function createTestWorkspace(label: string, options: TestWorkspaceOptions = {}): TestWorkspace {
+export function createTestWorkspace(
+  label: string,
+  options: TestWorkspaceOptions = {},
+): TestWorkspace {
   const root = makeTempDir(label);
-  const sourceDir = options.sourceDir ?? writeTinyGmProject(join(root, "elsewhere", "source-project"));
+  const sourceDir =
+    options.sourceDir ??
+    writeTinyGmProject(join(root, "elsewhere", "source-project"));
   mkdirSync(sourceDir, { recursive: true });
   const config = sampleConfig({
     sourcePath: sourceDir,
@@ -187,7 +228,10 @@ export interface InsertTaskInput {
 
 /** Insert a task row with a narrow allowlist and return the persisted record. */
 export function insertTask(repo: Repo, input: InsertTaskInput): TaskRecord {
-  const allowlist: Allowlist = { read: [...(input.read ?? [])], write: [...(input.write ?? [])] };
+  const allowlist: Allowlist = {
+    read: [...(input.read ?? [])],
+    write: [...(input.write ?? [])],
+  };
   repo.insertTask({
     id: input.id,
     unitIds: [...(input.unitIds ?? [`unit:${input.id}`])],
@@ -219,7 +263,9 @@ export function hashTree(root: string): Record<string, string> {
   const result: Record<string, string> = {};
   const walk = (directory: string): void => {
     if (!existsSync(directory)) return;
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort(
+      (a, b) => (a.name < b.name ? -1 : 1),
+    )) {
       const absolute = join(directory, entry.name);
       const rel = relative(root, absolute).split(sep).join("/");
       if (entry.isDirectory()) walk(absolute);
@@ -231,16 +277,23 @@ export function hashTree(root: string): Record<string, string> {
 }
 
 /** Tree snapshot including file modes, so read-only drift is visible as well as content drift. */
-export function statTree(root: string): Record<string, { sha256: string; mode: number }> {
+export function statTree(
+  root: string,
+): Record<string, { sha256: string; mode: number }> {
   const result: Record<string, { sha256: string; mode: number }> = {};
   const walk = (directory: string): void => {
     if (!existsSync(directory)) return;
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort(
+      (a, b) => (a.name < b.name ? -1 : 1),
+    )) {
       const absolute = join(directory, entry.name);
       const rel = relative(root, absolute).split(sep).join("/");
       if (entry.isDirectory()) walk(absolute);
       else if (entry.isFile()) {
-        result[rel] = { sha256: hashBytes(readFileSync(absolute)), mode: statSync(absolute).mode & 0o777 };
+        result[rel] = {
+          sha256: hashBytes(readFileSync(absolute)),
+          mode: statSync(absolute).mode & 0o777,
+        };
       }
     }
   };
@@ -289,7 +342,11 @@ export function readJson<T = unknown>(path: string): T {
 }
 
 /** Await a condition with a bounded poll; throws with `label` when it never becomes true. */
-export async function waitFor(condition: () => boolean, label: string, timeoutMs = 5_000): Promise<void> {
+export async function waitFor(
+  condition: () => boolean,
+  label: string,
+  timeoutMs = 5_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   const { promise, resolve } = Promise.withResolvers<void>();
   const poll = (): void => {

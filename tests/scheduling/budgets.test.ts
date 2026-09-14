@@ -8,7 +8,14 @@ import { silentLogger } from "../../src/util/log.ts";
 import { DeepError } from "../../src/util/result.ts";
 import { tempRepo } from "../helpers/environment.ts";
 
-const ZERO = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0, reported: true } as const;
+const ZERO = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  costUsd: 0,
+  reported: true,
+} as const;
 
 test("a per-task token ceiling is crossed by the charge that exceeds it", () => {
   const { repo, cleanup } = tempRepo("gm2deep-budget-task");
@@ -51,7 +58,10 @@ test("a per-task cost ceiling is crossed by the recorded cost", () => {
       perRunTokens: null,
       perRunCostUsd: null,
     });
-    assert.equal(ledger.charge("task:a", { ...ZERO, costUsd: 0.5 }).exceeded, false);
+    assert.equal(
+      ledger.charge("task:a", { ...ZERO, costUsd: 0.5 }).exceeded,
+      false,
+    );
     const decision = ledger.charge("task:a", { ...ZERO, costUsd: 0.6 });
     assert.equal(decision.exceeded, true);
     assert.equal(decision.scope, "task");
@@ -73,12 +83,18 @@ test("a run ceiling stops further dispatches for the run", () => {
       perRunTokens: 5,
       perRunCostUsd: null,
     });
-    assert.equal(ledger.charge("task:a", { ...ZERO, input: 4 }).exceeded, false);
+    assert.equal(
+      ledger.charge("task:a", { ...ZERO, input: 4 }).exceeded,
+      false,
+    );
     const decision = ledger.charge("task:b", { ...ZERO, input: 2 });
     assert.equal(decision.exceeded, true);
     assert.equal(decision.scope, "run");
     assert.equal(decision.run.input, 6);
-    assert.ok(decision.reason?.includes("run used 6 tokens"), decision.reason ?? "");
+    assert.ok(
+      decision.reason?.includes("run used 6 tokens"),
+      decision.reason ?? "",
+    );
     assert.throws(
       () => ledger.assertNotExceeded("task:c"),
       (error: unknown) => {
@@ -117,12 +133,19 @@ test("usage the provider never reported counts as zero cost and says so", () => 
     assert.equal(decision.run.reported, false);
     assert.equal(decision.exceeded, true);
     assert.equal(decision.scope, "task");
-    assert.ok(decision.reason?.includes("provider did not report usage"), decision.reason ?? "");
+    assert.ok(
+      decision.reason?.includes("provider did not report usage"),
+      decision.reason ?? "",
+    );
 
-    // A later reported charge flips the flag and is recorded as the real cost.
-    const reported = ledger.charge("task:a", { ...ZERO, costUsd: 0.25, reported: true });
+    // A later known charge contributes cost, but cannot make earlier unknown usage fully reported.
+    const reported = ledger.charge("task:a", {
+      ...ZERO,
+      costUsd: 0.25,
+      reported: true,
+    });
     assert.equal(reported.task.costUsd, 0.25);
-    assert.equal(reported.task.reported, true);
+    assert.equal(reported.task.reported, false);
   } finally {
     cleanup();
   }
@@ -144,17 +167,45 @@ test("a run already over its ceiling dispatches nothing; an unexceeded run dispa
       let executed = 0;
       const stopped = await dispatchAll(
         [
-          { id: "item-a", run: async (): Promise<string> => { executed += 1; return "a"; } },
-          { id: "item-b", run: async (): Promise<string> => { executed += 1; return "b"; } },
+          {
+            id: "item-a",
+            run: async (): Promise<string> => {
+              executed += 1;
+              return "a";
+            },
+          },
+          {
+            id: "item-b",
+            run: async (): Promise<string> => {
+              executed += 1;
+              return "b";
+            },
+          },
         ],
-        { maxWorkers: 2, leases, budget: overRun, logger: silentLogger, signal },
+        {
+          maxWorkers: 2,
+          leases,
+          budget: overRun,
+          logger: silentLogger,
+          signal,
+        },
       );
-      assert.equal(executed, 0, "no item may run once the run ceiling is crossed");
-      assert.deepEqual(stopped.map((outcome) => outcome.id).sort(), ["item-a", "item-b"]);
+      assert.equal(
+        executed,
+        0,
+        "no item may run once the run ceiling is crossed",
+      );
+      assert.deepEqual(stopped.map((outcome) => outcome.id).sort(), [
+        "item-a",
+        "item-b",
+      ]);
       for (const outcome of stopped) {
         assert.equal(outcome.ok, false);
         assert.equal(outcome.value, null);
-        assert.ok(outcome.skippedReason?.startsWith("run budget exceeded"), outcome.skippedReason ?? "");
+        assert.ok(
+          outcome.skippedReason?.startsWith("run budget exceeded"),
+          outcome.skippedReason ?? "",
+        );
       }
 
       const underRun = new BudgetLedger(repo, "run_under", {
@@ -166,13 +217,33 @@ test("a run already over its ceiling dispatches nothing; an unexceeded run dispa
       let ran = 0;
       const dispatched = await dispatchAll(
         [
-          { id: "item-c", run: async (): Promise<string> => { ran += 1; return "c"; } },
-          { id: "item-d", run: async (): Promise<string> => { ran += 1; return "d"; } },
+          {
+            id: "item-c",
+            run: async (): Promise<string> => {
+              ran += 1;
+              return "c";
+            },
+          },
+          {
+            id: "item-d",
+            run: async (): Promise<string> => {
+              ran += 1;
+              return "d";
+            },
+          },
         ],
-        { maxWorkers: 2, leases, budget: underRun, logger: silentLogger, signal },
+        {
+          maxWorkers: 2,
+          leases,
+          budget: underRun,
+          logger: silentLogger,
+          signal,
+        },
       );
       assert.equal(ran, 2);
-      assert.ok(dispatched.every((outcome) => outcome.ok && outcome.value !== null));
+      assert.ok(
+        dispatched.every((outcome) => outcome.ok && outcome.value !== null),
+      );
     } finally {
       leases.releaseAll();
     }

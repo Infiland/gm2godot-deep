@@ -1,10 +1,17 @@
+import { readTextRange, SourceReadCoverage } from "./sourceReads.ts";
+import { DocumentationService } from "../documentation/service.ts";
+import { documentationTools } from "../documentation/tools.ts";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { DeepError } from "../util/result.ts";
 import { canonicalJson } from "../util/json.ts";
 import { sha256Bytes } from "../util/sha256.ts";
-import { assertContained, assertNoEscapingLinks, assertSafeRelativePath } from "../workspaces/guards.ts";
+import {
+  assertContained,
+  assertNoEscapingLinks,
+  assertSafeRelativePath,
+} from "../workspaces/guards.ts";
 import {
   AnalysisRecordSchema,
   PatchRecordPayloadSchema,
@@ -48,6 +55,7 @@ export interface ToolBuildDeps {
   readonly unitGeneratedOutputs: readonly string[];
   readonly converterDiagnostics: readonly ConverterDiagnostic[];
   readonly inventory: InventoryRecord;
+  readonly documentationVersions?: { gamemaker: string; godot: string };
 }
 
 function logicalId(root: ToolRoot, relativePath: string): string {
@@ -55,7 +63,10 @@ function logicalId(root: ToolRoot, relativePath: string): string {
 }
 
 /** Allowlist membership at a path-segment boundary, so `gm2godot/**` never matches `gm2godotX`. */
-function allowlistAllows(entries: readonly string[], candidate: string): boolean {
+function allowlistAllows(
+  entries: readonly string[],
+  candidate: string,
+): boolean {
   return entries.some((entry) => {
     if (entry === candidate) return true;
     const normalised = entry.endsWith("/") ? entry.slice(0, -1) : entry;
@@ -63,17 +74,39 @@ function allowlistAllows(entries: readonly string[], candidate: string): boolean
   });
 }
 
-function deny(context: ToolContext, tool: string, reason: string, path?: string): never {
-  context.recordPolicyDenial({ tool, reason, ...(path === undefined ? {} : { path }) });
-  throw new DeepError("GM2DEEP-TOOL-DENIED", reason, { tool, path: path ?? null });
+function deny(
+  context: ToolContext,
+  tool: string,
+  reason: string,
+  path?: string,
+): never {
+  context.recordPolicyDenial({
+    tool,
+    reason,
+    ...(path === undefined ? {} : { path }),
+  });
+  throw new DeepError("GM2DEEP-TOOL-DENIED", reason, {
+    tool,
+    path: path ?? null,
+  });
 }
 
 /** Resolve a tool-requested read against the task-scoped roots; deny on any guard violation. */
-function resolveRead(deps: ToolBuildDeps, tool: string, root: ToolRoot, relativePath: string): string {
+function resolveRead(
+  deps: ToolBuildDeps,
+  tool: string,
+  root: ToolRoot,
+  relativePath: string,
+): string {
   try {
     assertSafeRelativePath(relativePath, "path");
   } catch (error) {
-    deny(deps.context, tool, error instanceof Error ? error.message : String(error), relativePath);
+    deny(
+      deps.context,
+      tool,
+      error instanceof Error ? error.message : String(error),
+      relativePath,
+    );
   }
   const rootDir = deps.context.workspaceRoots[root];
   let absolute: string;
@@ -81,41 +114,75 @@ function resolveRead(deps: ToolBuildDeps, tool: string, root: ToolRoot, relative
     absolute = assertContained(rootDir, relativePath);
     assertNoEscapingLinks(rootDir, relativePath);
   } catch (error) {
-    deny(deps.context, tool, error instanceof Error ? error.message : String(error), relativePath);
+    deny(
+      deps.context,
+      tool,
+      error instanceof Error ? error.message : String(error),
+      relativePath,
+    );
   }
   if (!existsSync(absolute) || !statSync(absolute).isFile()) {
-    throw new DeepError("GM2DEEP-TOOL-NOT-FOUND", `${logicalId(root, relativePath)} does not exist`, {
-      path: relativePath,
-    });
+    throw new DeepError(
+      "GM2DEEP-TOOL-NOT-FOUND",
+      `${logicalId(root, relativePath)} does not exist`,
+      {
+        path: relativePath,
+      },
+    );
   }
-  if (!allowlistAllows(deps.context.allowlist.read, logicalId(root, relativePath))) {
-    deny(deps.context, tool, `${logicalId(root, relativePath)} is outside this task's read allowlist`, relativePath);
+  if (
+    !allowlistAllows(deps.context.allowlist.read, logicalId(root, relativePath))
+  ) {
+    deny(
+      deps.context,
+      tool,
+      `${logicalId(root, relativePath)} is outside this task's read allowlist`,
+      relativePath,
+    );
   }
   return absolute;
 }
 
-function truncate(text: string, limit: number): { text: string; truncated: boolean } {
+function truncate(
+  text: string,
+  limit: number,
+): { text: string; truncated: boolean } {
   if (text.length <= limit) return { text, truncated: false };
-  return { text: `${text.slice(0, limit)}\n… [truncated at ${limit} characters]`, truncated: true };
+  return {
+    text: `${text.slice(0, limit)}\n… [truncated at ${limit} characters]`,
+    truncated: true,
+  };
 }
 
 function allowedTextFiles(deps: ToolBuildDeps, root: ToolRoot): string[] {
   return deps.context.allowlist.read
     .filter((entry) => entry.startsWith(`${root}:`))
     .map((entry) => entry.slice(root.length + 1))
-    .filter((candidate) => TEXT_EXTENSIONS.some((extension) => candidate.endsWith(extension)))
+    .filter((candidate) =>
+      TEXT_EXTENSIONS.some((extension) => candidate.endsWith(extension)),
+    )
     .sort();
 }
 
-function grep(deps: ToolBuildDeps, tool: string, root: ToolRoot, pattern: string, maxResults: number): ToolOutcome {
+function grep(
+  deps: ToolBuildDeps,
+  tool: string,
+  root: ToolRoot,
+  pattern: string,
+  maxResults: number,
+): ToolOutcome {
   let expression: RegExp;
   try {
     expression = new RegExp(pattern);
   } catch (error) {
-    throw new DeepError("GM2DEEP-TOOL-BAD-PATTERN", "pattern is not a valid regular expression", {
-      pattern,
-      cause: error instanceof Error ? error.message : String(error),
-    });
+    throw new DeepError(
+      "GM2DEEP-TOOL-BAD-PATTERN",
+      "pattern is not a valid regular expression",
+      {
+        pattern,
+        cause: error instanceof Error ? error.message : String(error),
+      },
+    );
   }
   const hits: string[] = [];
   let scanned = 0;
@@ -138,7 +205,9 @@ function grep(deps: ToolBuildDeps, tool: string, root: ToolRoot, pattern: string
         truncated = true;
         break;
       }
-      hits.push(`${logicalId(root, candidate)}:${index + 1}: ${line.trim().slice(0, 400)}`);
+      hits.push(
+        `${logicalId(root, candidate)}:${index + 1}: ${line.trim().slice(0, 400)}`,
+      );
     }
     if (truncated) break;
   }
@@ -148,23 +217,44 @@ function grep(deps: ToolBuildDeps, tool: string, root: ToolRoot, pattern: string
   };
 }
 
-const ReadFileArgs = z.strictObject({ path: z.string().min(1) });
+const ReadFileArgs = z.strictObject({
+  path: z.string().min(1),
+  startColumn: z.number().int().positive().default(1),
+  maxChars: z.number().int().min(1).max(MAX_READ_BYTES).default(MAX_READ_BYTES),
+  startLine: z.number().int().positive().default(1),
+  maxLines: z.number().int().min(1).max(1000).default(300),
+});
 const GrepArgs = z.strictObject({
   pattern: z.string().min(1),
   maxResults: z.number().int().positive().max(MAX_GREP_RESULTS).optional(),
 });
 const ReadEvidenceArgs = z.strictObject({
-  artifact: z.enum(["inventory", "gml-api", "analysis", "review", "contracts", "plan", "baseline"]),
+  artifact: z.enum([
+    "inventory",
+    "gml-api",
+    "analysis",
+    "review",
+    "contracts",
+    "plan",
+    "baseline",
+  ]),
   unitId: z.string().min(1).optional(),
   version: z.number().int().positive().optional(),
 });
 
 function evidenceOutcome(bytes: string): ToolOutcome {
   const capped = truncate(bytes, MAX_EVIDENCE_BYTES);
-  return { text: capped.text, details: { truncated: capped.truncated, bytes: bytes.length } };
+  return {
+    text: capped.text,
+    details: { truncated: capped.truncated, bytes: bytes.length },
+  };
 }
 
-function resultTool(name: string, schema: z.ZodTypeAny, description: string): ToolSpec {
+function resultTool(
+  name: string,
+  schema: z.ZodTypeAny,
+  description: string,
+): ToolSpec {
   return {
     name,
     description,
@@ -172,12 +262,16 @@ function resultTool(name: string, schema: z.ZodTypeAny, description: string): To
     execute: async (args: unknown): Promise<ToolOutcome> => {
       const parsed = schema.safeParse(args);
       if (!parsed.success) {
-        throw new DeepError("GM2DEEP-RESULT-INVALID", `the ${name} payload does not match the required schema`, {
-          issues: parsed.error.issues.slice(0, 20).map((issue) => ({
-            path: issue.path.map(String).join("."),
-            message: issue.message,
-          })),
-        });
+        throw new DeepError(
+          "GM2DEEP-RESULT-INVALID",
+          `the ${name} payload does not match the required schema`,
+          {
+            issues: parsed.error.issues.slice(0, 20).map((issue) => ({
+              path: issue.path.map(String).join("."),
+              message: issue.message,
+            })),
+          },
+        );
       }
       return { text: "accepted", details: parsed.data, terminate: true };
     },
@@ -193,9 +287,16 @@ const AnalystSubmissionSchema = AnalysisRecordSchema.omit({
   producedBy: true,
 });
 
-const ReviewerSubmissionSchema = ReviewRecordSchema.omit({ unitId: true, producedBy: true });
+const ReviewerSubmissionSchema = ReviewRecordSchema.omit({
+  unitId: true,
+  producedBy: true,
+});
 
-const ReconcilerSubmissionSchema = PlanRecordSchema.omit({ version: true, createdAt: true, producedBy: true });
+const ReconcilerSubmissionSchema = PlanRecordSchema.omit({
+  version: true,
+  createdAt: true,
+  producedBy: true,
+});
 
 export const ImplementerSubmissionSchema = PatchRecordPayloadSchema.omit({
   taskId: true,
@@ -206,7 +307,9 @@ export const ImplementerSubmissionSchema = PatchRecordPayloadSchema.omit({
   producedBy: true,
 });
 
-export type ImplementerSubmission = z.output<typeof ImplementerSubmissionSchema>;
+export type ImplementerSubmission = z.output<
+  typeof ImplementerSubmissionSchema
+>;
 
 /** `null` bytes, and brackets that do not balance, cannot be parsed by Godot — reject before publishing. */
 export function checkGdSyntax(path: string, content: string): void {
@@ -228,14 +331,22 @@ export function checkGdSyntax(path: string, content: string): void {
       inString = character;
       continue;
     }
-    if (character === "(" || character === "[" || character === "{") stack.push(character);
+    if (character === "(" || character === "[" || character === "{")
+      stack.push(character);
     else if (character === ")" || character === "]" || character === "}") {
       if (stack.pop() !== closers[character]) {
-        throw new DeepError("GM2DEEP-PATCH-SYNTAX", `${path} has unbalanced brackets`);
+        throw new DeepError(
+          "GM2DEEP-PATCH-SYNTAX",
+          `${path} has unbalanced brackets`,
+        );
       }
     }
   }
-  if (stack.length > 0) throw new DeepError("GM2DEEP-PATCH-SYNTAX", `${path} has unbalanced brackets`);
+  if (stack.length > 0)
+    throw new DeepError(
+      "GM2DEEP-PATCH-SYNTAX",
+      `${path} has unbalanced brackets`,
+    );
 }
 
 /**
@@ -243,15 +354,24 @@ export function checkGdSyntax(path: string, content: string): void {
  * hashes and Godot's bracket structure. Called by the `propose_patch` tool and again before publishing,
  * because the payload crosses a process boundary the model controls.
  */
-export function validateProposedPatch(task: TaskRecord, submission: ImplementerSubmission): void {
+export function validateProposedPatch(
+  task: TaskRecord,
+  submission: ImplementerSubmission,
+): void {
   if (submission.files.length === 0) {
-    throw new DeepError("GM2DEEP-PATCH-EMPTY", "a patch must change at least one file");
+    throw new DeepError(
+      "GM2DEEP-PATCH-EMPTY",
+      "a patch must change at least one file",
+    );
   }
   const seen = new Set<string>();
   for (const file of submission.files) {
     assertAllowed(task, file.path, file.action);
     if (seen.has(file.path)) {
-      throw new DeepError("GM2DEEP-PATCH-DUPLICATE-PATH", `${file.path} appears more than once in the patch`);
+      throw new DeepError(
+        "GM2DEEP-PATCH-DUPLICATE-PATH",
+        `${file.path} appears more than once in the patch`,
+      );
     }
     seen.add(file.path);
     const actual = sha256Bytes(Buffer.from(file.content, "utf8"));
@@ -262,15 +382,23 @@ export function validateProposedPatch(task: TaskRecord, submission: ImplementerS
       );
     }
     if (file.action === "delete" && file.preimageSha256 === null) {
-      throw new DeepError("GM2DEEP-PATCH-BASE-MISMATCH", `${file.path} deletes a file without recording its pre-image hash`);
+      throw new DeepError(
+        "GM2DEEP-PATCH-BASE-MISMATCH",
+        `${file.path} deletes a file without recording its pre-image hash`,
+      );
     }
-    if (file.action !== "delete" && file.path.endsWith(".gd")) checkGdSyntax(file.path, file.content);
+    if (file.action !== "delete" && file.path.endsWith(".gd"))
+      checkGdSyntax(file.path, file.content);
   }
 }
 
 function readEvidence(
   deps: ToolBuildDeps,
-  request: { artifact: string; unitId?: string | undefined; version?: number | undefined },
+  request: {
+    artifact: string;
+    unitId?: string | undefined;
+    version?: number | undefined;
+  },
 ): ToolOutcome {
   const evidenceDir = deps.context.workspaceRoots.evidence;
   const readIfPresent = (relativePath: string): ToolOutcome | null => {
@@ -278,14 +406,25 @@ function readEvidence(
     if (!existsSync(absolute)) return null;
     return evidenceOutcome(readFileSync(absolute, "utf8"));
   };
-  const encodedUnit = (unitId: string): string => unitId.replace(/:/g, "%3A").replace(/\//g, "%2F");
+  const encodedUnit = (unitId: string): string =>
+    unitId.replace(/:/g, "%3A").replace(/\//g, "%2F");
   switch (request.artifact) {
     case "inventory":
       return evidenceOutcome(canonicalJson(deps.inventory));
     case "gml-api":
-      return readIfPresent("inventory/gml-api.json") ?? { text: "(gml-api manifest not recorded)", details: {} };
+      return (
+        readIfPresent("inventory/gml-api.json") ?? {
+          text: "(gml-api manifest not recorded)",
+          details: {},
+        }
+      );
     case "baseline":
-      return readIfPresent("inventory/baseline.json") ?? { text: "(baseline evidence not recorded)", details: {} };
+      return (
+        readIfPresent("inventory/baseline.json") ?? {
+          text: "(baseline evidence not recorded)",
+          details: {},
+        }
+      );
     case "analysis": {
       const unitId = request.unitId ?? deps.unitId;
       return (
@@ -306,29 +445,43 @@ function readEvidence(
     }
     case "contracts": {
       const directory = join(evidenceDir, "contracts");
-      if (!existsSync(directory)) return { text: "(no contracts recorded)", details: {} };
+      if (!existsSync(directory))
+        return { text: "(no contracts recorded)", details: {} };
       const bodies = readdirSync(directory)
         .filter((name) => name.endsWith(".json"))
         .sort()
-        .map((name) => `### ${name}\n${readFileSync(join(directory, name), "utf8")}`);
+        .map(
+          (name) =>
+            `### ${name}\n${readFileSync(join(directory, name), "utf8")}`,
+        );
       return evidenceOutcome(bodies.join("\n"));
     }
     case "plan": {
       const version = request.version;
       if (version !== undefined) {
-        return readIfPresent(`plans/plan.v${version}.json`) ?? { text: `(no plan v${version})`, details: { version } };
+        return (
+          readIfPresent(`plans/plan.v${version}.json`) ?? {
+            text: `(no plan v${version})`,
+            details: { version },
+          }
+        );
       }
       const directory = join(evidenceDir, "plans");
-      if (!existsSync(directory)) return { text: "(no plan recorded)", details: {} };
+      if (!existsSync(directory))
+        return { text: "(no plan recorded)", details: {} };
       const names = readdirSync(directory)
         .filter((name) => name.endsWith(".json"))
         .sort();
       const latest = names[names.length - 1];
-      if (latest === undefined) return { text: "(no plan recorded)", details: {} };
+      if (latest === undefined)
+        return { text: "(no plan recorded)", details: {} };
       return evidenceOutcome(readFileSync(join(directory, latest), "utf8"));
     }
     default:
-      throw new DeepError("GM2DEEP-TOOL-BAD-ARGUMENT", `unknown evidence artifact ${request.artifact}`);
+      throw new DeepError(
+        "GM2DEEP-TOOL-BAD-ARGUMENT",
+        `unknown evidence artifact ${request.artifact}`,
+      );
   }
 }
 
@@ -339,40 +492,120 @@ function readEvidence(
  * `propose_patch` only validates and returns the payload: the patch artifact is written by the scheduler
  * once the run's usage is known, so the recorded provenance is the host's, never the model's.
  */
-export function buildToolSpecs(role: AgentRoleName, deps: ToolBuildDeps): ToolSpec[] {
+export function buildToolSpecs(
+  role: AgentRoleName,
+  deps: ToolBuildDeps,
+): ToolSpec[] {
   const config = roleConfig(role);
+  const sourceCoverage = new SourceReadCoverage();
+  const docs = new DocumentationService(
+    join(deps.context.workspaceRoots.evidence, "documentation"),
+    deps.documentationVersions ?? { gamemaker: "unknown", godot: "stable" },
+  );
 
-  const readSpec = (name: string, root: ToolRoot, description: string): ToolSpec => ({
+  const readSpec = (
+    name: string,
+    root: ToolRoot,
+    description: string,
+  ): ToolSpec => ({
     name,
     description,
     schema: ReadFileArgs,
     execute: async (args: unknown): Promise<ToolOutcome> => {
-      const { path } = ReadFileArgs.parse(args);
+      const { path, startLine, startColumn, maxLines, maxChars } =
+        ReadFileArgs.parse(args);
       const absolute = resolveRead(deps, name, root, path);
-      const { text, truncated } = truncate(readFileSync(absolute, "utf8"), MAX_READ_BYTES);
-      return { text, details: { path: logicalId(root, path), truncated } };
+      const metadata =
+        root === "source"
+          ? deps.inventory.files.find((file) => file.path === path)
+          : undefined;
+      if (metadata?.classification === "binary_asset")
+        return {
+          text: JSON.stringify(metadata),
+          details: { ...metadata, disposition: "binary_metadata_only" },
+        };
+      const bytes = readFileSync(absolute);
+      if (bytes.includes(0)) {
+        sourceCoverage.record(path, 0, 0, 0);
+        return {
+          text: "Binary content: inspect resource metadata and references.",
+          details: {
+            path: logicalId(root, path),
+            bytes: bytes.length,
+            sha256: sha256Bytes(bytes),
+            disposition: "binary_metadata_only",
+          },
+        };
+      }
+      const range = readTextRange(bytes.toString("utf8"), {
+        startLine,
+        startColumn,
+        maxLines,
+        maxChars,
+      });
+      if (root === "source")
+        sourceCoverage.record(
+          path,
+          range.startOffset,
+          range.endOffset,
+          range.totalChars,
+        );
+      return {
+        text: range.text,
+        details: {
+          path: logicalId(root, path),
+          sha256: sha256Bytes(bytes),
+          startLine,
+          startColumn,
+          totalLines: range.totalLines,
+          nextLine: range.nextLine,
+          nextColumn: range.nextColumn,
+          truncated: false,
+        },
+      };
     },
   });
 
   const available: Record<string, ToolSpec> = {
-    read_source: readSpec("read_source", "source", "Read a GameMaker source file from the frozen snapshot."),
-    read_generated: readSpec("read_generated", "baseline", "Read a file from the generated Godot baseline."),
+    read_source: readSpec(
+      "read_source",
+      "source",
+      "Read a GameMaker source file from the frozen snapshot.",
+    ),
+    read_generated: readSpec(
+      "read_generated",
+      role === "implementer" || role === "patch_reviewer" ? "port" : "baseline",
+      "Read a generated Godot file; implementation and patch review read the current accepted candidate.",
+    ),
     grep_source: {
       name: "grep_source",
       description: "Search the allowed source files with a regular expression.",
       schema: GrepArgs,
       execute: async (args: unknown): Promise<ToolOutcome> => {
         const parsed = GrepArgs.parse(args);
-        return grep(deps, "grep_source", "source", parsed.pattern, parsed.maxResults ?? MAX_GREP_RESULTS);
+        return grep(
+          deps,
+          "grep_source",
+          "source",
+          parsed.pattern,
+          parsed.maxResults ?? MAX_GREP_RESULTS,
+        );
       },
     },
     search_baseline: {
       name: "search_baseline",
-      description: "Search the allowed generated baseline files with a regular expression.",
+      description:
+        "Search the allowed generated baseline files with a regular expression.",
       schema: GrepArgs,
       execute: async (args: unknown): Promise<ToolOutcome> => {
         const parsed = GrepArgs.parse(args);
-        return grep(deps, "search_baseline", "baseline", parsed.pattern, parsed.maxResults ?? MAX_GREP_RESULTS);
+        return grep(
+          deps,
+          "search_baseline",
+          "baseline",
+          parsed.pattern,
+          parsed.maxResults ?? MAX_GREP_RESULTS,
+        );
       },
     },
     get_converter_diagnostics: {
@@ -380,7 +613,12 @@ export function buildToolSpecs(role: AgentRoleName, deps: ToolBuildDeps): ToolSp
       description: "Return the GM2Godot diagnostics recorded for this unit.",
       schema: z.strictObject({}),
       execute: async (): Promise<ToolOutcome> =>
-        evidenceOutcome(canonicalJson({ unitId: deps.unitId, diagnostics: deps.converterDiagnostics })),
+        evidenceOutcome(
+          canonicalJson({
+            unitId: deps.unitId,
+            diagnostics: deps.converterDiagnostics,
+          }),
+        ),
     },
     list_unit_files: {
       name: "list_unit_files",
@@ -397,9 +635,11 @@ export function buildToolSpecs(role: AgentRoleName, deps: ToolBuildDeps): ToolSp
     },
     read_evidence: {
       name: "read_evidence",
-      description: "Read a slice of the recorded evidence: inventory, gml-api, analysis, review, contracts, plan, baseline.",
+      description:
+        "Read a slice of the recorded evidence: inventory, gml-api, analysis, review, contracts, plan, baseline.",
       schema: ReadEvidenceArgs,
-      execute: async (args: unknown): Promise<ToolOutcome> => readEvidence(deps, ReadEvidenceArgs.parse(args)),
+      execute: async (args: unknown): Promise<ToolOutcome> =>
+        readEvidence(deps, ReadEvidenceArgs.parse(args)),
     },
     [RESULT_TOOL_NAMES.submit_analysis]: resultTool(
       RESULT_TOOL_NAMES.submit_analysis,
@@ -428,7 +668,10 @@ export function buildToolSpecs(role: AgentRoleName, deps: ToolBuildDeps): ToolSp
         } catch (error) {
           const failure = error instanceof DeepError ? error : null;
           if (failure !== null && failure.code.startsWith("GM2DEEP-PATCH-")) {
-            deps.context.recordPolicyDenial({ tool: RESULT_TOOL_NAMES.propose_patch, reason: failure.message });
+            deps.context.recordPolicyDenial({
+              tool: RESULT_TOOL_NAMES.propose_patch,
+              reason: failure.message,
+            });
           }
           throw error;
         }
@@ -441,9 +684,61 @@ export function buildToolSpecs(role: AgentRoleName, deps: ToolBuildDeps): ToolSp
     },
   };
 
+  if (role === "analyst") {
+    const submit = available[RESULT_TOOL_NAMES.submit_analysis]!;
+    available[RESULT_TOOL_NAMES.submit_analysis] = {
+      ...submit,
+      execute: async (args, context) => {
+        const unread = deps.unitSourcePaths.filter((path) => {
+          const entry = deps.inventory.files.find((file) => file.path === path);
+          if (
+            entry?.classification === "binary_asset" ||
+            entry?.classification === "excluded"
+          )
+            return false;
+          return !sourceCoverage.complete(path);
+        });
+        if (unread.length)
+          throw new DeepError(
+            "GM2DEEP-SOURCE-NOT-READ",
+            `Read every line of the unit source before submitting: ${unread.join(", ")}`,
+          );
+        const payload = AnalystSubmissionSchema.parse(args);
+        if (
+          payload.strategy !== "blocked" &&
+          !payload.conversionInstructions?.length
+        )
+          throw new DeepError(
+            "GM2DEEP-MAPPING-REQUIRED",
+            "Provide actionable conversionInstructions for this resource before submitting",
+          );
+        if (
+          payload.strategy !== "blocked" &&
+          !payload.documentationCitations?.length
+        )
+          throw new DeepError(
+            "GM2DEEP-DOCUMENTATION-REQUIRED",
+            "Read official documentation and cite it, or mark the mapping blocked when documentation is unavailable",
+          );
+        for (const citation of payload.documentationCitations ?? [])
+          if (!docs.hasCitation(citation))
+            throw new DeepError(
+              "GM2DEEP-DOCUMENTATION-INVALID",
+              "Documentation citations must match pages read through read_documentation in this task",
+            );
+        return submit.execute(args, context);
+      },
+    };
+  }
+
+  for (const tool of documentationTools(docs)) available[tool.name] = tool;
   const missing = config.toolNames.filter((name) => !(name in available));
   if (missing.length > 0) {
-    throw new DeepError("GM2DEEP-TOOL-UNKNOWN", `role ${role} requests tools that are not implemented`, { missing });
+    throw new DeepError(
+      "GM2DEEP-TOOL-UNKNOWN",
+      `role ${role} requests tools that are not implemented`,
+      { missing },
+    );
   }
   return config.toolNames.map((name) => available[name] as ToolSpec);
 }

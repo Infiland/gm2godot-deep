@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "jobRoot": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourcePath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "baselinePath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "hostSnapshotPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "default": "mock",
+          "type": "string",
+          "enum": [
+            "pi",
+            "mock",
+            "codex",
+            "claude",
+            "opencode"
+          ]
+        },
+        "provider": {
+          "default": null,
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "default": null,
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable": {
+          "default": null,
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "endpoint": {
+          "default": null,
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "roleOverrides": {
+          "default": {},
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "runtime": {
+                "type": "string",
+                "enum": [
+                  "pi",
+                  "mock",
+                  "codex",
+                  "claude",
+                  "opencode"
+                ]
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "analysisWorkers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "freeOnly": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allowRemoteSourceUpload": {
+          "default": false,
+          "type": "boolean"
+        },
+        "freeProviderConcurrency": {
+          "default": 1,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "budgets": {
+          "type": "object",
+          "properties": {
+            "maxTokens": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxCostUsd": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxSeconds": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 31536000
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "perTaskTokens": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "perTaskCostUsd": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "perRunTokens": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "perRunCostUsd": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "godotBinary": {
+          "default": null,
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "runtime",
+        "provider",
+        "model",
+        "executable",
+        "endpoint",
+        "freeOnly",
+        "allowRemoteSourceUpload",
+        "freeProviderConcurrency",
+        "godotBinary"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "jobRoot",
+    "sourcePath",
+    "baselinePath",
+    "hostSnapshotPath",
+    "settings"
+  ],
+  "additionalProperties": false
+}

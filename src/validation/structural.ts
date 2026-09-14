@@ -1,4 +1,10 @@
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join, relative, sep } from "node:path";
 import { ensureDir, writeJsonAtomic } from "../util/json.ts";
 import { buildSubprocessEnv } from "../sandbox/env.ts";
@@ -11,7 +17,13 @@ import {
   isGodotValidationReportMissing,
   readGodotValidationReport,
 } from "../adapters/godot/report.ts";
-import { failedResult, inconclusiveResult, passedInProcessResult, passedResult, skippedResult } from "./levels.ts";
+import {
+  failedResult,
+  inconclusiveResult,
+  passedInProcessResult,
+  passedResult,
+  skippedResult,
+} from "./levels.ts";
 import type { ValidationResult } from "./levels.ts";
 import type { GodotVersionExpectation } from "./godotRun.ts";
 
@@ -61,7 +73,9 @@ export interface StructuralDeps {
 function walkProjectFiles(root: string): string[] {
   const found: string[] = [];
   const walk = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort(
+      (a, b) => (a.name < b.name ? -1 : 1),
+    )) {
       const absolute = join(directory, entry.name);
       const posix = relative(root, absolute).split(sep).join("/");
       if (entry.isDirectory()) {
@@ -92,11 +106,21 @@ function unresolved(
   reason: string,
   snippet: string,
 ): void {
-  findings.push({ path, line, column, reference, reason, snippet: snippet.trim().slice(0, 200) });
+  findings.push({
+    path,
+    line,
+    column,
+    reference,
+    reason,
+    snippet: snippet.trim().slice(0, 200),
+  });
 }
 
 /** `res://foo/bar.gd` → absolute path inside the project, or `null` for a non-`res://` value. */
-function resolveResReference(projectPath: string, reference: string): string | null {
+function resolveResReference(
+  projectPath: string,
+  reference: string,
+): string | null {
   if (!reference.startsWith("res://")) return null;
   const inner = reference.slice("res://".length);
   if (inner.length === 0) return null;
@@ -104,7 +128,8 @@ function resolveResReference(projectPath: string, reference: string): string | n
 }
 
 const PATH_ATTRIBUTE = /\bpath\s*=\s*"(res:\/\/[^"]*)"/g;
-const SCRIPT_REFERENCE = /(?:preload|load)\s*\(\s*("|')(res:\/\/[^"']*)\1\s*\)/g;
+const SCRIPT_REFERENCE =
+  /(?:preload|load)\s*\(\s*("|')(res:\/\/[^"']*)\1\s*\)/g;
 const AUTOLOAD_ENTRY = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"\*?(res:\/\/[^"]+)"/;
 
 function checkResReference(
@@ -118,19 +143,46 @@ function checkResReference(
 ): void {
   const resolved = resolveResReference(projectPath, reference);
   if (resolved === null) {
-    unresolved(findings, path, line, column, reference, "reference is not a res:// path inside the project", snippet);
+    unresolved(
+      findings,
+      path,
+      line,
+      column,
+      reference,
+      "reference is not a res:// path inside the project",
+      snippet,
+    );
     return;
   }
   if (!existsSync(resolved)) {
-    unresolved(findings, path, line, column, reference, "referenced resource does not exist", snippet);
+    unresolved(
+      findings,
+      path,
+      line,
+      column,
+      reference,
+      "referenced resource does not exist",
+      snippet,
+    );
   }
 }
 
-function checkProjectGodot(projectPath: string, findings: StructuralFinding[]): void {
+function checkProjectGodot(
+  projectPath: string,
+  findings: StructuralFinding[],
+): void {
   const path = PROJECT_FILE;
   const absolute = join(projectPath, path);
   if (!existsSync(absolute)) {
-    unresolved(findings, path, 1, 1, path, "the Godot project file is missing", "");
+    unresolved(
+      findings,
+      path,
+      1,
+      1,
+      path,
+      "the Godot project file is missing",
+      "",
+    );
     return;
   }
   const lines = readFileSync(absolute, "utf8").split(/\r?\n/);
@@ -147,11 +199,23 @@ function checkProjectGodot(projectPath: string, findings: StructuralFinding[]): 
     const reference = match?.[2];
     if (reference === undefined) continue;
     const column = line.indexOf("res://") + 1;
-    checkResReference(findings, projectPath, path, index + 1, reference, column <= 0 ? 1 : column, line);
+    checkResReference(
+      findings,
+      projectPath,
+      path,
+      index + 1,
+      reference,
+      column <= 0 ? 1 : column,
+      line,
+    );
   }
 }
 
-function checkSceneFile(projectPath: string, path: string, findings: StructuralFinding[]): void {
+function checkSceneFile(
+  projectPath: string,
+  path: string,
+  findings: StructuralFinding[],
+): void {
   const absolute = join(projectPath, ...path.split("/"));
   const lines = readFileSync(absolute, "utf8").split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
@@ -159,14 +223,27 @@ function checkSceneFile(projectPath: string, path: string, findings: StructuralF
     PATH_ATTRIBUTE.lastIndex = 0;
     for (const match of line.matchAll(PATH_ATTRIBUTE)) {
       const reference = match[1];
-      if (reference === undefined || !hasReferencedExtension(reference)) continue;
+      if (reference === undefined || !hasReferencedExtension(reference))
+        continue;
       const offset = match.index + match[0].indexOf("res://");
-      checkResReference(findings, projectPath, path, index + 1, reference, offset + 1, line);
+      checkResReference(
+        findings,
+        projectPath,
+        path,
+        index + 1,
+        reference,
+        offset + 1,
+        line,
+      );
     }
   }
 }
 
-function checkScriptFile(projectPath: string, path: string, findings: StructuralFinding[]): void {
+function checkScriptFile(
+  projectPath: string,
+  path: string,
+  findings: StructuralFinding[],
+): void {
   const absolute = join(projectPath, ...path.split("/"));
   const lines = readFileSync(absolute, "utf8").split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
@@ -175,7 +252,15 @@ function checkScriptFile(projectPath: string, path: string, findings: Structural
       const reference = match[2];
       if (reference === undefined) continue;
       const offset = match.index + match[0].indexOf("res://");
-      checkResReference(findings, projectPath, path, index + 1, reference, offset + 1, line);
+      checkResReference(
+        findings,
+        projectPath,
+        path,
+        index + 1,
+        reference,
+        offset + 1,
+        line,
+      );
     }
   }
 }
@@ -184,10 +269,20 @@ function checkScriptFile(projectPath: string, path: string, findings: Structural
  * Parse the project directory itself. Returns the per-reference findings; an empty list is the pass
  * condition. Static only: no engine is consulted and nothing is executed.
  */
-export function collectStructuralFindings(projectPath: string): StructuralFinding[] {
+export function collectStructuralFindings(
+  projectPath: string,
+): StructuralFinding[] {
   const findings: StructuralFinding[] = [];
   if (!existsSync(projectPath)) {
-    unresolved(findings, projectPath, 1, 1, projectPath, "the godot project directory does not exist", "");
+    unresolved(
+      findings,
+      projectPath,
+      1,
+      1,
+      projectPath,
+      "the godot project directory does not exist",
+      "",
+    );
     return findings;
   }
   checkProjectGodot(projectPath, findings);
@@ -196,7 +291,8 @@ export function collectStructuralFindings(projectPath: string): StructuralFindin
       checkSceneFile(projectPath, path, findings);
       continue;
     }
-    if (path.endsWith(SCRIPT_EXTENSION)) checkScriptFile(projectPath, path, findings);
+    if (path.endsWith(SCRIPT_EXTENSION))
+      checkScriptFile(projectPath, path, findings);
   }
   return findings;
 }
@@ -214,18 +310,30 @@ export function checkStructuralStatic(deps: {
       checkId: STRUCTURAL_STATIC_CHECK_ID,
       name: "level B structural (static) — project.godot, .tscn/.tres references and preload/load literals resolve",
       inputRevision: deps.inputRevision,
-      command: "in-process: src/validation/structural.ts#collectStructuralFindings",
+      command:
+        "in-process: src/validation/structural.ts#collectStructuralFindings",
       exitStatus: 0,
       durationMs: Date.now() - startedAt,
-      reason: "every res:// reference in project.godot, .tscn, .tres and .gd resolves; no engine was required",
+      reason:
+        "every res:// reference in project.godot, .tscn, .tres and .gd resolves; no engine was required",
     });
   }
   ensureDir(deps.reportDir);
-  const findingsPath = join(deps.reportDir, STRUCTURAL_STATIC_FINDINGS_FILENAME);
-  writeJsonAtomic(findingsPath, { schemaVersion: 1, projectPath: deps.projectPath, findings });
+  const findingsPath = join(
+    deps.reportDir,
+    STRUCTURAL_STATIC_FINDINGS_FILENAME,
+  );
+  writeJsonAtomic(findingsPath, {
+    schemaVersion: 1,
+    projectPath: deps.projectPath,
+    findings,
+  });
   const listed = findings
     .slice(0, 10)
-    .map((finding) => `${finding.path}:${String(finding.line)} → ${finding.reference} (${finding.reason})`)
+    .map(
+      (finding) =>
+        `${finding.path}:${String(finding.line)} → ${finding.reference} (${finding.reason})`,
+    )
     .join("; ");
   return failedResult({
     level: "B",
@@ -238,10 +346,26 @@ export function checkStructuralStatic(deps: {
   });
 }
 
-async function checkGm2GodotValidate(deps: StructuralDeps): Promise<ValidationResult> {
+async function checkGm2GodotValidate(
+  deps: StructuralDeps,
+): Promise<ValidationResult> {
   const checkId = STRUCTURAL_GM2GODOT_CHECK_ID;
-  const name = "level B structural — pinned GM2Godot `validate` over the candidate project";
-  const identity = { level: "B" as const, checkId, name, inputRevision: deps.inputRevision };
+  const name =
+    "level B structural — pinned GM2Godot `validate` over the candidate project";
+  const identity = {
+    level: "B" as const,
+    checkId,
+    name,
+    inputRevision: deps.inputRevision,
+  };
+
+  if (!deps.python || !deps.gm2godotCheckout) {
+    return skippedResult({
+      ...identity,
+      reason:
+        "Hosted extension: checkout-based validation is unavailable; static checks and direct Godot validation are reported separately",
+    });
+  }
 
   if (deps.godotBinary === null || deps.godotBinary.trim().length === 0) {
     return skippedResult({
@@ -280,10 +404,26 @@ async function checkGm2GodotValidate(deps: StructuralDeps): Promise<ValidationRe
   const stdout = stripAnsi(captured.stdout);
   const stderr = stripAnsi(captured.stderr);
   const logPath = join(deps.reportDir, STRUCTURAL_GM2GODOT_LOG_FILENAME);
-  writeFileSync(logPath, [`# command: ${argv.join(" ")}`, "--- stdout ---", stdout, "--- stderr ---", stderr, ""].join("\n"), "utf8");
+  writeFileSync(
+    logPath,
+    [
+      `# command: ${argv.join(" ")}`,
+      "--- stdout ---",
+      stdout,
+      "--- stderr ---",
+      stderr,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
   const command = argv.join(" ");
   const durationMs = Date.now() - startedAt;
-  const runtimeIdentity = { command, exitStatus: captured.exitCode, durationMs, logsPath: logPath };
+  const runtimeIdentity = {
+    command,
+    exitStatus: captured.exitCode,
+    durationMs,
+    logsPath: logPath,
+  };
 
   const probe = await probeGodot(
     deps.godotBinary,
@@ -301,7 +441,11 @@ async function checkGm2GodotValidate(deps: StructuralDeps): Promise<ValidationRe
 
   if (isGodotValidationReportMissing(reading)) {
     if (captured.exitCode !== 0) {
-      const firstLine = (stderr.trim().split(/\r?\n/)[0] ?? stdout.trim().split(/\r?\n/)[0] ?? "").slice(0, 300);
+      const firstLine = (
+        stderr.trim().split(/\r?\n/)[0] ??
+        stdout.trim().split(/\r?\n/)[0] ??
+        ""
+      ).slice(0, 300);
       return failedResult({
         ...identity,
         ...runtimeIdentity,
@@ -316,7 +460,11 @@ async function checkGm2GodotValidate(deps: StructuralDeps): Promise<ValidationRe
   }
 
   if (reading.status === "skipped") {
-    return skippedResult({ ...identity, ...runtimeIdentity, reason: reading.message });
+    return skippedResult({
+      ...identity,
+      ...runtimeIdentity,
+      reason: reading.message,
+    });
   }
 
   if (reading.status === "failed" || captured.exitCode !== 0) {
@@ -324,7 +472,10 @@ async function checkGm2GodotValidate(deps: StructuralDeps): Promise<ValidationRe
       ...identity,
       ...runtimeIdentity,
       reason: `gm2godot validate reported ${reading.status} (exit ${String(captured.exitCode)}): ${reading.message}`,
-      artifacts: [logPath, join(deps.projectPath, GODOT_VALIDATION_REPORT_RELATIVE_PATH)],
+      artifacts: [
+        logPath,
+        join(deps.projectPath, GODOT_VALIDATION_REPORT_RELATIVE_PATH),
+      ],
     });
   }
 
@@ -352,7 +503,10 @@ async function checkGm2GodotValidate(deps: StructuralDeps): Promise<ValidationRe
     exitStatus: captured.exitCode,
     durationMs,
     logsPath: logPath,
-    artifacts: [logPath, join(deps.projectPath, GODOT_VALIDATION_REPORT_RELATIVE_PATH)],
+    artifacts: [
+      logPath,
+      join(deps.projectPath, GODOT_VALIDATION_REPORT_RELATIVE_PATH),
+    ],
     reason: `gm2godot validate reported passed (${reading.message})`,
   });
 }
@@ -365,7 +519,9 @@ async function checkGm2GodotValidate(deps: StructuralDeps): Promise<ValidationRe
  * writes `gm2godot/godot_validation_report.json` (and headless Godot its import cache) inside the
  * project it is pointed at.
  */
-export async function checkStructural(deps: StructuralDeps): Promise<readonly ValidationResult[]> {
+export async function checkStructural(
+  deps: StructuralDeps,
+): Promise<readonly ValidationResult[]> {
   const staticResult = checkStructuralStatic({
     projectPath: deps.projectPath,
     inputRevision: deps.inputRevision,

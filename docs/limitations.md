@@ -50,22 +50,21 @@ them.
 `ExperimentalWarning: SQLite is an experimental feature` on first use. That warning is documented
 here and deliberately not suppressed.
 
-## 5. A real Pi run needs network and credentials
+## 5. Live providers and usage
 
-The default runtime is the mock (`agent.runtime` defaults to `"mock"`, `src/config/schema.ts`). A
-live Pi run requires network access and provider credentials resolvable at execution time
-(`~/.pi/agent/auth.json` or `PI_CODING_AGENT_DIR`). When no credential resolves, that path reports
-`skipped` with the reason and the report says the live-provider path is unverified — it is never
-reported as passing. When usage is not reported by the provider, `Usage.reported` is `false`, the
-counters are zero by construction (`ZERO_USAGE`, `src/agents/runtime.ts`) and the report renders
-"provider did not report usage"; no pricing is invented.
+The hosted client defaults to OpenCode automatic free selection and explicitly requests consent
+before research. The developer CLI retains its mock default. Provider connection or authentication
+failures pause a job; they are not passing research. Usage absent from a provider remains unknown.
+Native coding agents may not expose monetary costs or enforce a precise per-response token cap.
+See [provider contracts](providers.md) for current controls and limitations.
 
-## 6. `unsafe-local` is never the default
+## 6. Staging and process isolation
 
-`src/sandbox/select.ts` never selects `unsafe-local` through `auto`; the backend requires both
-`sandbox.backend === "unsafe-local"` and `policy.allowUnsafeLocal === true`, and refuses otherwise
-with `SandboxUnavailableError` (`src/sandbox/unsafeLocal.ts`). Every record it produces carries
-`backendId: "unsafe-local"` so it can be rendered under an `UNSAFE LOCAL MODE` banner.
+Hosted candidate copies preserve source and baseline, but filesystem staging is not an execution
+sandbox. Coding agents receive guarded source/documentation tools and structured candidate proposals;
+the adapters disable native tools. Third-party agent binaries and Godot still execute locally.
+The legacy standalone CLI has separate optional sandbox backends; those do not imply isolation for
+the hosted extension. Engine and behavioral results remain separate from file accounting.
 
 ## 7. The mock runtime injects one documented first-attempt defect
 
@@ -142,3 +141,10 @@ compared byte-for-byte.
 `src/indexing/inventory.ts` copes with the null/absolute `source_path` by normalising both the top-level
 value and every `entries[].source_path` against the project's real source files (longest suffix match wins),
 which is the only form that survives conversion from a staging copy.
+
+## Hosted resume and availability
+
+A saved job resumes against its original source and baseline hashes. Changed inputs require a fresh
+job; selective cross-job reuse is not yet implemented. Automatic free eligibility is checked against
+current official metadata before dispatch. A disappeared model or inaccessible pricing can pause
+research even if a prior evaluation passed. No paid fallback occurs.

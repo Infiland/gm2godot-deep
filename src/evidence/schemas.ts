@@ -3,9 +3,20 @@ import { z } from "zod";
 export const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const SHA256 = z.string().regex(SHA256_PATTERN);
 
-export const AGENT_RUNTIME_IDS = ["pi", "mock"] as const;
+export const AGENT_RUNTIME_IDS = [
+  "pi",
+  "mock",
+  "codex",
+  "claude",
+  "opencode",
+] as const;
 export const EVIDENCE_BASES = ["observed", "inferred"] as const;
-export const UNIT_STRATEGIES = ["retain_generated", "repair_generated", "replace_component", "blocked"] as const;
+export const UNIT_STRATEGIES = [
+  "retain_generated",
+  "repair_generated",
+  "replace_component",
+  "blocked",
+] as const;
 
 const Basis = z.string().min(1);
 const EvidenceBasis = z.enum(EVIDENCE_BASES);
@@ -80,14 +91,46 @@ export const ConverterDiagnosticSchema = z.strictObject({
 export type ConverterDiagnostic = z.output<typeof ConverterDiagnosticSchema>;
 
 export const AnalysisRecordSchema = z.strictObject({
+  documentationCitations: z
+    .array(
+      z.strictObject({
+        url: z.string().url(),
+        title: z.string().min(1),
+        version: z.string().min(1),
+        contentHash: z.string().regex(/^[0-9a-f]{64}$/),
+        retrievedAt: z.string().min(1),
+      }),
+    )
+    .optional(),
+  conversionInstructions: z
+    .array(
+      z.strictObject({
+        sourceConcept: z.string().min(1),
+        godotEquivalent: z.string().min(1),
+        implementationNotes: z.string().min(1),
+        evidence: z.array(EvidenceRefSchema),
+      }),
+    )
+    .optional(),
+  plannedOutputs: z
+    .array(
+      z.strictObject({ path: z.string().min(1), reason: z.string().min(1) }),
+    )
+    .optional(),
   schemaVersion: z.literal(1),
   unitId: z.string().min(1),
   unitKind: z.string().min(1),
   sourceSnapshotId: SHA256,
   baselineId: SHA256.nullable(),
-  sourcePaths: z.array(z.strictObject({ path: z.string().min(1), sha256: SHA256 })),
+  sourcePaths: z.array(
+    z.strictObject({ path: z.string().min(1), sha256: SHA256 }),
+  ),
   generatedOutputs: z.array(
-    z.strictObject({ path: z.string().min(1), sha256: SHA256, sourceMapPath: z.string().min(1).optional() }),
+    z.strictObject({
+      path: z.string().min(1),
+      sha256: SHA256,
+      sourceMapPath: z.string().min(1).optional(),
+    }),
   ),
   converterDiagnostics: z.array(ConverterDiagnosticSchema),
   purpose: z.strictObject({ text: z.string().min(1), basis: EvidenceBasis }),
@@ -119,7 +162,13 @@ export const AnalysisRecordSchema = z.strictObject({
       evidence: z.array(EvidenceRefSchema),
     }),
   ),
-  inputs: z.array(z.strictObject({ name: z.string().min(1), source: z.string().min(1), basis: Basis })),
+  inputs: z.array(
+    z.strictObject({
+      name: z.string().min(1),
+      source: z.string().min(1),
+      basis: Basis,
+    }),
+  ),
   sideEffects: z.array(ObservedStatement),
   dependencies: z.strictObject({
     confirmed: z.array(
@@ -167,7 +216,12 @@ export const AnalysisRecordSchema = z.strictObject({
   ),
   assumptions: z.array(BasedText),
   uncertainties: z.array(BasedText),
-  blockers: z.array(z.strictObject({ text: z.string().min(1), evidence: z.array(EvidenceRefSchema) })),
+  blockers: z.array(
+    z.strictObject({
+      text: z.string().min(1),
+      evidence: z.array(EvidenceRefSchema),
+    }),
+  ),
   evidence: z.array(
     z.strictObject({
       claim: z.string().min(1),
@@ -189,7 +243,11 @@ export const ReviewRecordSchema = z.strictObject({
     }),
   ),
   missedDependencies: z.array(
-    z.strictObject({ toUnitId: z.string().min(1), kind: InteractionKindSchema, basis: Basis }),
+    z.strictObject({
+      toUnitId: z.string().min(1),
+      kind: InteractionKindSchema,
+      basis: Basis,
+    }),
   ),
   additionalHazards: z.array(
     z.strictObject({
@@ -213,7 +271,12 @@ export const ContractRuleSchema = z.strictObject({
   statement: z.string().min(1),
   basis: z.enum(["upstream", "analysis", "unresolved"]),
   /** Relative path inside the baseline, and optionally a line, that justifies the rule. */
-  upstreamBasis: z.strictObject({ path: z.string().min(1), line: z.number().int().positive().optional() }).nullable(),
+  upstreamBasis: z
+    .strictObject({
+      path: z.string().min(1),
+      line: z.number().int().positive().optional(),
+    })
+    .nullable(),
   evidence: z.array(EvidenceRefSchema),
 });
 
@@ -316,7 +379,11 @@ export type ValidationResult = z.output<typeof ValidationResultSchema>;
 export const TraceFileSchema = z.strictObject({
   schemaVersion: z.literal(1),
   name: z.string().min(1),
-  provenance: z.enum(["observed_original_runtime", "source_derived", "synthetic"]),
+  provenance: z.enum([
+    "observed_original_runtime",
+    "source_derived",
+    "synthetic",
+  ]),
   engine: z.string().min(1).optional(),
   randomness: z.strictObject({
     mode: z.enum(["fixed_seed", "normalized", "none"]),
