@@ -78,6 +78,22 @@ test("public role names apply to all internal agent roles", () => {
     assert.equal(roleAgentConfig(config, role).model, expected);
 });
 
+test("role runtime overrides do not inherit an executable belonging to another runtime", () => {
+  const config = sampleConfig({ sourcePath: "/tmp/source", workspacePath: "/tmp/work" });
+  config.agent.runtime = "codex";
+  config.agent.executable = "/custom/Codex tools/codex";
+  config.agent.roleOverrides = {
+    researcher: { runtime: "codex", model: "research" },
+    planner: { runtime: "claude", model: "plan" },
+    implementer: { runtime: "opencode", model: "build" },
+    reviewer: { model: "review" },
+  };
+  assert.equal(roleAgentConfig(config, "analyst").executable, config.agent.executable);
+  assert.equal(roleAgentConfig(config, "risk_reviewer").executable, config.agent.executable);
+  assert.equal(roleAgentConfig(config, "reconciler").executable, null);
+  assert.equal(roleAgentConfig(config, "implementer").executable, null);
+});
+
 test("analyst submission is rejected until all source characters have been read", async () => {
   const {
     createTestWorkspace,

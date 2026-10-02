@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
-import { CodexConnection } from "./external/codex.ts";
+import { discoverCodex } from "./external/codexCapabilities.ts";
+import type { CodexInstallationSource } from "./external/codexExecutable.ts";
 import { runProcess } from "./external/process.ts";
 import { OpenCodeClient } from "./external/opencode.ts";
 import { isVerifiedFree } from "../models/freePolicy.ts";
@@ -10,6 +11,10 @@ export interface ProviderCapability {
   runtime: string;
   installed: boolean;
   authenticated: boolean | null;
+  executable?: string;
+  installationSource?: CodexInstallationSource;
+  authMode?: "chatgpt" | "apiKey" | "other" | null;
+  discoveryStatus?: "ready" | "login-required" | "unavailable";
   models: {
     id: string;
     name: string;
@@ -33,40 +38,11 @@ export async function discoverAgent(options: {
   signal: AbortSignal;
 }): Promise<ProviderCapability> {
   options.signal.throwIfAborted();
+  if (options.runtime === "codex") return discoverCodex(options);
   const cwd = mkdtempSync(join(tmpdir(), "gm2deep-discover-"));
   const executable = options.executable ?? options.runtime;
   const base = { runtime: options.runtime, installed: true };
   try {
-    if (options.runtime === "codex") {
-      const client = new CodexConnection(executable, cwd);
-      const abort = (): void => {
-        void client.close();
-      };
-      options.signal.addEventListener("abort", abort, { once: true });
-      try {
-        await client.call("initialize", {
-          clientInfo: { name: "gm2godot-deep", version: "1" },
-        });
-        client.notify("initialized");
-        const account = (await client.call("account/read", {
-          refreshToken: false,
-        })) as { account?: unknown };
-        const listed = (await client.call("model/list", { limit: 100 })) as {
-          data?: { id: string; displayName?: string }[];
-        };
-        return {
-          ...base,
-          authenticated: !!account.account,
-          models: (listed.data ?? []).map((m) => ({
-            id: m.id,
-            name: m.displayName ?? m.id,
-          })),
-        };
-      } finally {
-        options.signal.removeEventListener("abort", abort);
-        await client.close();
-      }
-    }
     if (options.runtime === "claude") {
       const status = JSON.parse(
         await runProcess(

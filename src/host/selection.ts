@@ -49,7 +49,8 @@ export async function verifySelection(agent: Config["agent"]): Promise<void> {
         ? await discoverPi(choice.provider ?? "", {})
         : await discoverAgent({
             runtime: choice.runtime,
-            ...(agent.executable ? { executable: agent.executable } : {}),
+            ...(agent.executable && choice.runtime === agent.runtime
+              ? { executable: agent.executable } : {}),
             ...(agent.endpoint ? { endpoint: agent.endpoint } : {}),
             provider: choice.provider,
             freeOnly: agent.freeOnly,

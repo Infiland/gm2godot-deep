@@ -30,6 +30,8 @@ export function roleAgentConfig(
   return {
     ...config.agent,
     runtime: override?.runtime ?? config.agent.runtime,
+    executable: override?.runtime && override.runtime !== config.agent.runtime
+      ? null : config.agent.executable,
     provider: override?.provider ?? config.agent.provider,
     model: override?.model ?? config.agent.model,
   };
@@ -80,7 +82,7 @@ export function createRuntime(options: RuntimeFactoryOptions): AgentRuntime {
         transcriptsDir: options.transcriptsDir,
         create: (cwd) =>
           runtime === "codex"
-            ? codexTransport(executable, cwd)
+            ? codexTransport(config.agent.executable, cwd)
             : runtime === "claude"
               ? claudeTransport(executable, cwd)
               : new OpenCodeClient({
