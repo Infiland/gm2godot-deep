@@ -15,6 +15,8 @@ Optional AI research and conversion for [GM2Godot](https://github.com/Infiland/G
 
 Closing the client pauses work. Reopen GM2Godot to resume. Source/baseline changes are checked before resuming; stale reviewed inputs cannot silently be reused.
 
+Codex uses your existing local ChatGPT or Codex API sign-in. Deep detects the CLI on PATH, in common install locations, or inside the macOS ChatGPT/Codex desktop app, including when a GUI launch has a minimal PATH. You can supply an explicit executable path for another installation. If sign-in is required, run `codex login` with that installation and refresh models; Deep never reads or copies Codex credentials. [Codex authentication](https://learn.chatgpt.com/docs/auth) describes account access and credential storage. Account usage limits still apply, and subscription access is separate from Automatic Free.
+
 Free mode admits only currently advertised zero-price Zen models and never switches to a paid model. Availability, limits, model behavior and data-use terms are controlled by the provider. A small synthetic evaluation selects candidates; it is not a promise that a complete game can be converted perfectly or for free indefinitely. Native-agent subscription usage may not expose monetary accounting; token/time limits and reported usage are kept distinct.
 
 ## Development

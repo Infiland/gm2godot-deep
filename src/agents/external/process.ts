@@ -1,4 +1,18 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { win32 } from "node:path";
+
+async function waitForExit(child: ChildProcessWithoutNullStreams, timeout: number): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((resolve) => {
+    const done = (): void => {
+      clearTimeout(timer);
+      child.removeListener("close", done);
+      resolve();
+    };
+    const timer = setTimeout(done, timeout);
+    child.once("close", done);
+  });
+}
 
 export function startProcess(
   executable: string,
@@ -21,15 +35,32 @@ export async function stopProcess(
   if (!child.pid || child.exitCode !== null || child.signalCode !== null)
     return;
   if (process.platform === "win32") {
-    await new Promise<void>((resolve) => {
+    // Desktop launches can have a minimal PATH. Resolve this system utility
+    // explicitly so shutdown neither misses it nor executes a PATH replacement.
+    const systemRoot = process.env["SystemRoot"] ?? process.env["WINDIR"];
+    const absoluteRoot = systemRoot && win32.isAbsolute(systemRoot)
+      && win32.parse(systemRoot).root.length > 1;
+    const killed = absoluteRoot && await new Promise<boolean>((resolve) => {
       const killer = spawn(
-        "taskkill",
+        win32.join(systemRoot, "System32", "taskkill.exe"),
         ["/pid", String(child.pid), "/T", "/F"],
         { stdio: "ignore", windowsHide: true },
       );
-      killer.once("error", () => resolve());
-      killer.once("close", () => resolve());
+      let settled = false;
+      const done = (success: boolean): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(success);
+      };
+      const timer = setTimeout(() => {
+        killer.kill();
+        done(false);
+      }, 1000);
+      killer.once("error", () => done(false));
+      killer.once("close", (code) => done(code === 0));
     });
+    if (!killed) child.kill();
   } else {
     try {
       process.kill(-child.pid, "SIGTERM");
@@ -37,14 +68,14 @@ export async function stopProcess(
       child.kill();
     }
   }
-  await Promise.race([
-    new Promise<void>((resolve) => child.once("close", () => resolve())),
-    new Promise<void>((resolve) => setTimeout(resolve, 500)),
-  ]);
-  if (child.exitCode === null && process.platform !== "win32") {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch {}
+  await waitForExit(child, 500);
+  if (child.exitCode === null && child.signalCode === null) {
+    if (process.platform === "win32") child.kill();
+    else {
+      try { process.kill(-child.pid, "SIGKILL"); }
+      catch { child.kill("SIGKILL"); }
+    }
+    await waitForExit(child, 500);
   }
 }
 export async function runProcess(
