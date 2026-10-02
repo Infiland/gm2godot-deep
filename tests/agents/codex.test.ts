@@ -207,7 +207,8 @@ test("Codex connection rejects calls after disconnection without hanging", async
 });
 
 test("discovery and conversion share automatic PATH detection", async () => {
-  const fixture = fakeCodex();
+  // A semicolon cannot belong to a Windows PATH entry; explicit-path tests retain it.
+  const fixture = fakeCodex({ binaryDirectoryName: "Codex tools" });
   const previous = process.env["PATH"];
   process.env["PATH"] = dirname(fixture.executable);
   const transport = codexTransport(null, fixture.directory);

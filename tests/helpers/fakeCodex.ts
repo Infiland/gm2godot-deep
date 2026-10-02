@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export interface FakeCodexOptions {
+  binaryDirectoryName?: string;
   scenario?: "complete" | "bad-json" | "failed-turn" | "disconnect" | "stall" | "discovery-stall" | "initialize-error" | "bad-wire" | "turn-error" | "bad-account" | "model-error" | "repeated-cursor";
   account?: { account: unknown; requiresOpenaiAuth?: boolean };
   output?: unknown;
@@ -28,7 +29,7 @@ export function fakeCodex(options: FakeCodexOptions = {}): {
   cleanup: () => void;
 } {
   const directory = mkdtempSync(join(tmpdir(), "deep-codex-test-"));
-  const binaryDirectory = join(directory, "Codex tools ; literal");
+  const binaryDirectory = join(directory, options.binaryDirectoryName ?? "Codex tools ; literal");
   mkdirSync(binaryDirectory);
   const executable = join(binaryDirectory, process.platform === "win32" ? "codex.cmd" : "codex");
   const entry = process.platform === "win32"
