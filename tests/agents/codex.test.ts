@@ -25,6 +25,7 @@ function assertStartupIsolation(argv: string[]): void {
   assert.ok(argv.includes('web_search="disabled"'));
   assert.ok(argv.includes("mcp_servers={}"));
   assert.ok(argv.includes("project_doc_max_bytes=0"));
+  assert.ok(argv.includes("notify=[]"));
 }
 
 test("Codex discovery reuses sign-in safely, pages models and never starts inference", async () => {
@@ -63,7 +64,9 @@ test("Codex discovery distinguishes login-required, API account and auth-free co
     [{ account: null, requiresOpenaiAuth: false }, null, null, "ready"],
     [{ account: null }, null, null, "unavailable"],
     [{ account: { type: "apiKey", apiKey: "secret-key" }, requiresOpenaiAuth: true }, true, "apiKey", "ready"],
-    [{ account: { type: "amazonBedrock" }, requiresOpenaiAuth: false }, true, "other", "ready"],
+    [{ account: { type: "amazonBedrock" }, requiresOpenaiAuth: false }, null, "other", "ready"],
+    [{ account: { type: "chatgpt" }, requiresOpenaiAuth: false }, null, null, "ready"],
+    [{ account: { type: "apiKey" }, requiresOpenaiAuth: false }, null, null, "ready"],
   ] as const) {
     const fixture = fakeCodex({ account });
     try {
@@ -75,7 +78,10 @@ test("Codex discovery distinguishes login-required, API account and auth-free co
       assert.equal(capability.models[0]?.authenticated, authenticated);
       assert.ok(!JSON.stringify(capability).includes("secret"));
       if (status === "login-required") assert.match(capability.reason!, /codex login/);
-      if ("requiresOpenaiAuth" in account && account.requiresOpenaiAuth === false && authenticated === null) assert.doesNotMatch(capability.reason!, /sign-in is required/);
+      if ("requiresOpenaiAuth" in account && account.requiresOpenaiAuth === false) {
+        assert.doesNotMatch(capability.reason!, /sign-in is required|ChatGPT|Existing Codex API key/);
+        assert.match(capability.reason!, /configured Codex provider/);
+      }
     } finally { fixture.cleanup(); }
   }
 });
@@ -134,12 +140,38 @@ test("Codex conversion returns structured output and usage while denying native 
     const config = start["config"] as Record<string, unknown>;
     assert.equal(config["features.hooks"], false);
     assert.equal(config["features.plugins"], false);
-    assert.deepEqual(config["mcp_servers"], {});
+    assert.deepEqual(config["mcp_servers"], Object.fromEntries(["synthetic.with-dot", "__proto__"].map((name) => [name, { enabled: false }])));
+    assert.equal(Object.hasOwn(config["mcp_servers"] as object, "__proto__"), true);
+    assert.deepEqual(config["notify"], []);
+    const configIndex = records.findIndex((record) => record.method === "config/read");
+    assert.ok(configIndex > 0 && configIndex < records.findIndex((record) => record.method === "thread/start"));
+    assert.deepEqual(records[configIndex]?.params, { includeLayers: false });
+    assert.ok(!JSON.stringify(completion).includes("secret"));
     const turn = records.find((record) => record.method === "turn/start")!.params!;
     assert.deepEqual(turn["outputSchema"], request().schema);
     for (const identifier of ["native-tool", "native-approval"])
       assert.equal(records.find((record) => record.id === identifier)?.error?.["code"], -32601);
   } finally { await transport.close(); fixture.cleanup(); }
+});
+
+test("Codex fails closed before thread startup if effective MCP configuration cannot be read", async () => {
+  for (const options of [
+    { scenario: "config-error" }, { scenario: "bad-config" },
+    { effectiveConfig: {} }, { effectiveConfig: { config: {} } },
+    { effectiveConfig: { config: { mcp_servers: null } } },
+  ] as const) {
+    const fixture = fakeCodex(options);
+    const transport = codexTransport(fixture.executable, fixture.directory);
+    try {
+      await assert.rejects(transport.complete(request()), (error: unknown) => {
+        assert.ok(error instanceof TransportFailure);
+        assert.ok(!error.message.includes("secret"));
+        return true;
+      });
+      assert.ok(fixture.records().some((record) => record.method === "config/read"));
+      assert.ok(!fixture.records().some((record) => record.method === "thread/start" || record.method === "turn/start"));
+    } finally { await transport.close(); fixture.cleanup(); }
+  }
 });
 
 test("Codex conversion failures retain reported usage and hide provider diagnostics", async () => {

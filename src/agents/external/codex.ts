@@ -29,11 +29,22 @@ const DISABLED_FEATURES = [
   "tool_suggest", "code_mode", "code_mode_host", "sleep_tool",
 ] as const;
 
-function isolatedConfig(): Record<string, unknown> {
+const ConfigReadSchema = z.object({
+  config: z.object({ mcp_servers: z.unknown().optional() }),
+});
+
+async function isolatedConfig(client: CodexConnection): Promise<Record<string, unknown>> {
   const config: Record<string, unknown> = {
-    web_search: "disabled", mcp_servers: {}, project_doc_max_bytes: 0,
+    web_search: "disabled", mcp_servers: {}, project_doc_max_bytes: 0, notify: [],
   };
   for (const feature of DISABLED_FEATURES) config[`features.${feature}`] = false;
+  // Empty table overrides merge with user config; they do not clear inherited
+  // MCP servers. Read only the effective server keys, never log configuration
+  // values, then disable every exact name before a thread can launch servers.
+  const inherited = ConfigReadSchema.parse(await client.call("config/read", { includeLayers: false })).config.mcp_servers;
+  if (inherited === null || typeof inherited !== "object" || Array.isArray(inherited))
+    throw new Error("Codex MCP configuration was unavailable");
+  config["mcp_servers"] = Object.fromEntries(Object.keys(inherited ?? {}).map((name) => [name, { enabled: false }]));
   return config;
 }
 export class CodexConnection {
@@ -55,7 +66,7 @@ export class CodexConnection {
     // Keep CODEX_HOME and Codex's credential store intact so its existing sign-in is reused.
     const args = [...resolved.args, "app-server", "--listen", "stdio://"];
     for (const feature of DISABLED_FEATURES) args.push("--disable", feature);
-    args.push("--config", 'web_search="disabled"', "--config", "mcp_servers={}", "--config", "project_doc_max_bytes=0");
+    args.push("--config", 'web_search="disabled"', "--config", "mcp_servers={}", "--config", "project_doc_max_bytes=0", "--config", "notify=[]");
     if (selectedProvider) args.push("--config", `model_provider=${JSON.stringify(selectedProvider)}`);
     this.child = startProcess(
       resolved.command,
@@ -184,7 +195,7 @@ export function codexTransport(
           sandbox: "read-only",
           ephemeral: true,
           baseInstructions: request.system,
-          config: isolatedConfig(),
+          config: await isolatedConfig(client),
           selectedCapabilityRoots: [],
           dynamicTools: [],
         }));

@@ -60,11 +60,16 @@ export async function discoverCodex(options: {
     });
     client.notify("initialized");
     const account = AccountSchema.parse(await client.call("account/read", { refreshToken: false }));
-    authenticated = account.account !== null ? true
+    // Cached OpenAI account info can coexist with a configured provider that
+    // does not use it. Do not label that provider as using ChatGPT/API auth.
+    authenticated = account.requiresOpenaiAuth === false ? null
+      : account.account !== null ? true
       : account.requiresOpenaiAuth === true ? false : null;
     authMode = account.account === null ? null
-      : account.account.type === "chatgpt" ? "chatgpt"
-      : account.account.type === "apiKey" ? "apiKey" : "other";
+      : account.account.type === "chatgpt"
+        ? account.requiresOpenaiAuth === false ? null : "chatgpt"
+        : account.account.type === "apiKey"
+          ? account.requiresOpenaiAuth === false ? null : "apiKey" : "other";
     const provider = normalizeCodexProvider(options.provider) ?? "codex";
     const models: ProviderCapability["models"] = [];
     const seen = new Set<string>();

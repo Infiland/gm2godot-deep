@@ -4,8 +4,9 @@ import { join } from "node:path";
 
 export interface FakeCodexOptions {
   binaryDirectoryName?: string;
-  scenario?: "complete" | "bad-json" | "failed-turn" | "disconnect" | "stall" | "discovery-stall" | "initialize-error" | "bad-wire" | "turn-error" | "bad-account" | "model-error" | "repeated-cursor";
+  scenario?: "complete" | "bad-json" | "failed-turn" | "disconnect" | "stall" | "discovery-stall" | "initialize-error" | "bad-wire" | "turn-error" | "bad-account" | "model-error" | "repeated-cursor" | "config-error" | "bad-config";
   account?: { account: unknown; requiresOpenaiAuth?: boolean };
+  effectiveConfig?: unknown;
   output?: unknown;
   pages?: { data: { id: string; model?: string; displayName?: string }[]; nextCursor?: string | null }[];
 }
@@ -79,6 +80,14 @@ createInterface({input: process.stdin}).on("line", (line) => {
   if (request.method === "account/read") {
     return reply(options.scenario === "bad-account" ? {account: "secret-invalid-account"}
       : options.account ?? {account: {type: "chatgpt", email: "secret-account@example.test", accessToken: "secret-token"}, requiresOpenaiAuth: true});
+  }
+  if (request.method === "config/read") {
+    if (options.scenario === "config-error") return fail();
+    if (Object.hasOwn(options, "effectiveConfig")) return reply(options.effectiveConfig);
+    if (options.scenario === "bad-config") return reply({config: {mcp_servers: ["malformed"]}});
+    return reply({config: {mcp_servers: Object.fromEntries(["synthetic.with-dot", "__proto__"].map((name) => [name, {
+      enabled: true, command: "never-executed", env: {SECRET: "secret-config-value"}
+    }]))}});
   }
   if (request.method === "model/list") {
     if (options.scenario === "discovery-stall") return;
